@@ -1,0 +1,159 @@
+# @name Sonos Local Read UI Check
+# @desc Read-only catalogs and real station logo preview; write actions rejected
+# @author lucaamo
+# @version 0.2.6
+# @ondemand
+# @config seed text "IP Sonos" default="" maxlen=64
+# @config last_room text "Selected room UID (empty = seed room)" default="" maxlen=96
+# @config language select "Language" default="Italiano" options="Italiano,English"
+# @config current_radio_only bool "Only current radio information" default=false
+# @config local_radio_logos bool "Approved custom radio logos" default=true
+# @config logos_only bool "Only station logo previews" default=false
+# @config logo_indices text "Radio positions to preview (empty = all)" default="" maxlen=64
+# @config request_timeout_s number "Request timeout (s)" default=35 min=5 max=90
+
+import sonos_local_protocol
+import sonos_local_ui
+import json
+import string
+
+class ReadOnly : sonos_local_protocol.Client
+  var reading
+  def dispatch(job)
+    self.reading = job
+    var allowed = ["GetZoneGroupState", "GetVolume", "GetTransportInfo", "GetCurrentTransportActions", "GetPositionInfo", "GetMediaInfo", "Browse"]
+    var ok = job["kind"] == "description"
+    for action : allowed if job["action"] == action ok = true end end
+    if !ok self.inflight = nil self.fail("READ CHECK rejected write") return end
+    super(self).dispatch(job)
+  end
+  def fail(message)
+    shared.set("read_failure", json.dump({"error":message, "job":self.reading}))
+    super(self).fail(message)
+  end
+  def accept(job, body)
+    try
+      super(self).accept(job, body)
+    except .. as e, message
+      shared.set("read_exception", json.dump({"error":e, "message":message, "job":job}))
+      raise e, message
+    end
+  end
+end
+
+class ReadUI
+  var ui, phase, next_at, started, checks, room_index, preview, stations, logo_index
+  def init()
+    var client = ReadOnly(store.get("seed"), store.get("last_room"), 5, 128)
+    self.ui = sonos_local_ui.Remote({"seed":store.get("seed"), "last_room":store.get("last_room"), "language":store.get("language"), "page_size":5, "favorite_limit":128,
+      "last_category":"playlist", "artwork":true, "local_radio_logos":store.get("local_radio_logos"), "volume_step":1, "long_ms":700, "message_s":4, "context_s":6, "scroll_speed":80, "request_timeout_s":int(store.get("request_timeout_s"))}, client)
+    self.phase = 0
+    self.next_at = 0
+    self.started = now_ms()
+    self.checks = []
+    self.room_index = 0
+    self.preview = nil
+    self.stations = []
+    self.logo_index = 0
+  end
+  def setup()
+    self.started = now_ms()
+    shared.set("read_check", json.dump({"phase":"setup", "complete":false}))
+    self.ui.setup()
+  end
+  def capture(name)
+    self.ui.tick()
+    self.checks.push({"view":name, "room":self.ui.room_name(), "top":self.ui.top, "bottom":self.ui.bottom, "error":self.ui.client.error})
+    shared.set("read_check", json.dump({"phase":name, "elapsed_ms":now_ms() - self.started, "checks":self.checks, "index":self.ui.client.favorites, "catalogs":self.ui.client.totals, "complete":false}))
+    self.next_at = now_ms() + 7000
+  end
+  def loop()
+    var c = self.ui.client
+    if self.phase == 11 return end
+    if now_ms() - self.started > 240000
+      shared.set("read_check", json.dump({"complete":false, "error":"bounded read check timeout", "checks":self.checks}))
+      return
+    end
+    if c.error != ""
+      shared.set("read_check", json.dump({"complete":false, "error":c.error, "checks":self.checks}))
+      return
+    end
+    if now_ms() < self.next_at || !c.ready || c.scanning return end
+    if self.phase == 0 && store.get("current_radio_only")
+      self.ui.go("now") self.capture("current-radio")
+      shared.set("read_check", json.dump({"complete":true, "elapsed_ms":now_ms() - self.started, "checks":self.checks,
+        "radio":c.is_radio(), "volume":c.volume, "transport":c.transport, "real_write_actions":0}))
+      self.phase = 11
+      return
+    end
+    if self.phase == 0 && store.get("logos_only") self.phase = 8 end
+    if self.phase == 0
+      self.capture("root")
+    elif self.phase == 1
+      self.ui.category = "playlist" self.ui.go("favorites")
+      self.ui.index = size(self.ui.entries) - 1 self.capture("playlist-last")
+    elif self.phase == 2
+      self.ui.category = "radio" self.ui.go("favorites")
+      for i : 1 .. 11 self.ui.on_knob("right") end
+      self.capture("radio-last")
+    elif self.phase == 3
+      self.ui.go("rooms") self.capture("rooms")
+    elif self.phase == 4
+      self.ui.go("now") self.capture("now-context")
+    elif self.phase == 5
+      self.ui.context_until = 0
+      self.capture("now-track")
+    elif self.phase == 6
+      self.room_index = 0
+      self.ui.go("rooms") self.ui.index = self.room_index self.ui.confirm()
+      self.next_at = now_ms() + 500
+    elif self.phase == 7
+      self.capture("selected-room-" + str(self.room_index))
+      self.room_index += 1
+      if self.room_index < size(c.rooms)
+        self.ui.go("rooms") self.ui.index = self.room_index self.ui.confirm()
+        return
+      end
+    elif self.phase == 8
+      var position = 0
+      var filter = store.get("logo_indices")
+      for item : c.favorites
+        if item["category"] != "radio" continue end
+        position += 1
+        if filter == "" || string.find("," + filter + ",", "," + str(position) + ",") >= 0 self.stations.push(item) end
+      end
+      var preview_client = ReadOnly(store.get("seed"), "", 5, 128)
+      preview_client.selected = c.selected preview_client.ready = true preview_client.radio = true
+      preview_client.transport = "PLAYING"
+      self.preview = sonos_local_ui.Remote(self.ui.options, preview_client)
+      self.preview.go("now")
+    elif self.phase == 9
+      if self.logo_index < size(self.stations)
+        var item = self.stations[self.logo_index]
+        var pc = self.preview.client
+        pc.station = item["title"] pc.current_uri = item["uri"] pc.station_cover = item["cover"] pc.cover = ""
+        pc.radio_context()
+        pc.title = "Radio " + str(self.logo_index + 1) + "/" + str(size(self.stations))
+        self.preview.context_until = 0 self.preview.labels()
+        self.logo_index += 1
+        shared.set("read_check", json.dump({"phase":"station-logo-" + str(self.logo_index), "elapsed_ms":now_ms() - self.started, "checks":self.checks, "index":c.favorites, "catalogs":c.totals, "complete":false,
+          "radio_title":item["title"], "custom_logo_index":self.preview.logo_index, "logo_from_original_favorite":self.preview.logo_index < 0}))
+        self.next_at = now_ms() + 7000
+        return
+      end
+      shared.set("read_check", json.dump({"complete":true, "elapsed_ms":now_ms() - self.started, "checks":self.checks, "index":c.favorites, "catalogs":c.totals, "station_logos_previewed":self.logo_index, "real_write_actions":0}))
+      self.next_at = now_ms() + 3000
+    elif self.phase == 10
+      rotation.close() return
+    end
+    self.phase += 1
+  end
+  def draw()
+    if self.preview != nil self.preview.draw()
+    else self.ui.draw() end
+  end
+  def on_hide() self.ui.on_hide() end
+  def on_knob(event) return true end
+  def on_button_event(btn, event) return true end
+end
+return ReadUI()

@@ -1,0 +1,32 @@
+# @name Sonos Remote Local
+# @desc Direct Sonos: all playlists, radio station knob, room and volume controls
+# @author lucaamo
+# @version 0.2.7
+# @display 52x16
+# @ondemand
+# License: PolyForm Noncommercial 1.0.0
+# Required Notice: Copyright © Stephan Mühl (Blueforcer) https://github.com/Blueforcer/awtrix-ng
+# @config language select "Lingua / Language" default=Italiano options=Italiano,English help="Lingua dell'interfaccia / Interface language"
+# @config seed text "IP Sonos iniziale / Seed IP" default="" maxlen=64
+# @config page_size number "Preferiti per pagina / Page size" default=5 min=1 max=5
+# @config favorite_limit number "Limite preferiti / Favorite limit" default=128 min=15 max=256
+# @config artwork bool "Artwork diretto / Direct artwork" default=true
+# @config local_radio_logos bool "Loghi radio personali / Custom radio logos" default=true help="Loghi locali 16x16 per le 12 radio preferite / Local 16x16 logos for the 12 favorite stations"
+# @config volume_step number "Passo volume / Volume step" default=1 min=1 max=10
+# @config long_ms number "Ghiera lunga / Knob hold (ms)" default=700 min=500 max=3000
+# @config message_s number "Durata messaggi / Message time (s)" default=4 min=2 max=10
+# @config request_timeout_s number "Attesa massima Sonos / Request timeout (s)" default=35 min=5 max=90 help="Limite per richiesta; nessuna ripetizione automatica / Per-request limit; no automatic retry of commands"
+# @config context_s number "Durata stanza-sorgente / Context time (s)" default=6 min=4 max=10
+# @config scroll_speed number "Velocità testo / Scroll speed" default=80 min=30 max=200
+# @config last_room text "Ultima stanza / Last room (UID)" default="" maxlen=64
+# @config last_category text "Ultima categoria / Last category" default="playlist" maxlen=16
+
+import sonos_local_ui
+
+return sonos_local_ui.Remote({"language":store.get("language"), "seed":store.get("seed"), "page_size":int(store.get("page_size")),
+  "favorite_limit":int(store.get("favorite_limit")), "artwork":store.get("artwork"), "local_radio_logos":store.get("local_radio_logos"),
+  "volume_step":int(store.get("volume_step")), "long_ms":int(store.get("long_ms")),
+  "message_s":int(store.get("message_s")), "context_s":int(store.get("context_s")),
+  "request_timeout_s":int(store.get("request_timeout_s")),
+  "scroll_speed":int(store.get("scroll_speed")), "last_room":store.get("last_room"),
+  "last_category":store.get("last_category")}, nil)

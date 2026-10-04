@@ -1,0 +1,427 @@
+# @module sonos_local_ui
+# @name Sonos Local UI
+# @desc Knob menus and room-aware controls for direct Sonos
+# @author lucaamo
+# @version 0.2.7
+# @display 52x16
+# License: PolyForm Noncommercial 1.0.0
+# Required Notice: Copyright © Stephan Mühl (Blueforcer) https://github.com/Blueforcer/awtrix-ng
+
+import sonos_local_protocol
+import json
+
+class Remote
+  var client, options, view, index, root_index, category, entries, roots, help, previous
+  var pressed, press_at, long_done, pending_volume, volume_at, banner, banner_until, context_until
+  var top, bottom, color, artwork, scroll, ticker, last_signature, last_error, persist, working, translations, language
+  var logo_index, logo_rows, logo_palettes, logo_ids, logo_names
+
+  def init(options, client)
+    self.options = options
+    self.language = options.find("language") == "English" ? "English" : "Italiano"
+    self.translations = self.language == "English" ? {
+      "SONOS LOCALE":"SONOS LOCAL", "Playlist":"Playlists", "Radio":"Radio",
+      "Lettore":"Player", "In riproduzione":"Now playing", "Aggiorna preferiti":"Refresh favorites", "Comandi":"Controls",
+      "Gira: scorri il menu":"Turn: browse menu", "Clic ghiera: conferma":"Click knob: select",
+      "Ghiera lunga: indietro":"Hold knob: go back", "Musica: clic play/pausa":"Music: click play/pause",
+      "Musica: gira per tracce":"Music: turn for tracks", "Tasti laterali: volume":"Side buttons: volume", "Centrale lungo: esci":"Hold middle: exit",
+      "Radio: gira per stazioni":"Radio: turn for stations", "Nessuna radio preferita":"No favorite stations",
+      "Radio scelta: ":"Selected station: ", "Avvio radio...":"Starting station...", "Sonos non risponde":"Sonos is not responding",
+      "Connessione...":"Connecting...", "Attendere Sonos...":"Waiting for Sonos...", "Aggiornamento...":"Refreshing...",
+      "Nessun lettore":"No players", "Lettore selezionato":"Player selected", "Caricamento preferiti...":"Loading favorites...",
+      "Nessun preferito Sonos":"No Sonos favorites", "Avvio: ":"Starting: ", "Sonos non pronto":"Sonos not ready",
+      "Pausa...":"Pausing...", "Riproduzione fermata...":"Playback stopped...", "Riproduzione...":"Playing...",
+      "Traccia precedente...":"Previous track...", "Traccia successiva...":"Next track...", "Volume Sonos...":"Sonos volume...",
+      "Volume ":"Volume ", "COMANDI ":"CONTROLS ", "Scegli lettore":"Select player", "Radio ":"Radio ", "Playlist ":"Playlists ",
+      "Carico ":"Loading ", "Nessun preferito":"No favorites", "In pausa":"Paused", "Fermata":"Stopped", "Avvio...":"Starting...", " (gruppo)":" (group)", "Nessun titolo":"No title",
+      "Configurare IP Sonos":"Set Sonos IP", "Ghiera lunga: menu":"Hold knob: menu", "Lettore non disponibile":"Player unavailable",
+      "Preferiti...":"Loading favorites...", "Traccia non disponibile":"Track unavailable", "Tipo non supportato":"Unsupported type",
+      "Servizio Sonos assente":"Sonos service unavailable", "Risposta XML incompleta":"Incomplete XML response",
+      "Metadati non supportati":"Unsupported metadata", "Preferiti aggiornati":"Favorites refreshed"
+    } : {}
+    self.persist = client == nil
+    self.client = client == nil ? sonos_local_protocol.Client(options["seed"], options["last_room"], options["page_size"], options["favorite_limit"]) : client
+    if options.find("request_timeout_s") != nil self.client.request_timeout_ms = options["request_timeout_s"] * 1000 end
+    self.roots = ["Playlist", "Radio", "Lettore", "In riproduzione", "Aggiorna preferiti", "Comandi"]
+    self.help = ["Gira: scorri il menu", "Clic ghiera: conferma", "Ghiera lunga: indietro", "Musica: clic play/pausa", "Musica: gira per tracce", "Radio: gira per stazioni", "Tasti laterali: volume", "Centrale lungo: esci"]
+    for i : 0 .. size(self.roots) - 1 self.roots[i] = self.t(self.roots[i]) end
+    for i : 0 .. size(self.help) - 1 self.help[i] = self.t(self.help[i]) end
+    self.category = options["last_category"] == "radio" ? "radio" : "playlist"
+    self.root_index = self.category == "radio" ? 1 : 0
+    self.view = "root"
+    self.index = self.root_index
+    self.entries = []
+    self.previous = "root"
+    self.pressed = false
+    self.press_at = 0
+    self.long_done = false
+    self.pending_volume = 0
+    self.volume_at = 0
+    self.banner = ""
+    self.banner_until = 0
+    self.context_until = 0
+    self.top = self.t("SONOS LOCALE")
+    self.bottom = self.t("Connessione...")
+    self.color = 0xFFFFFF
+    self.artwork = false
+    self.scroll = {"mode":"loop", "speed":options["scroll_speed"], "holdMs":800, "gap":12, "whenFits":"static"}
+    self.ticker = nil
+    self.last_signature = ""
+    self.last_error = ""
+    self.working = ""
+    self.logo_index = -1
+    # BEGIN LOCAL RADIO LOGOS 16X16
+    self.logo_rows = [
+      [0x05555550,0x15555554,0x55555555,0x40050141,0x40041040,0x55041041,0x55041041,0x50041041,0x41541041,0x41541041,0x40041041,0x50050140,0x15555554,0x05555550,0x00555500,0x00055000],
+      [0x00000000,0x00150000,0x01555400,0x15001000,0x14AA0AA0,0x52022020,0x52022020,0x50AA0AA1,0x52020221,0x12020821,0x14AA2021,0x05000004,0x01540054,0x00155540,0x00005400,0x00000000],
+      [0x00041000,0x022AA880,0x0AAAAAA0,0x29AAAA68,0xAA9556AA,0x2A5FF5A8,0xA97FFD6A,0x29C7C768,0x29C3C368,0x09FFFF60,0x09F55F60,0x05541550,0x01F55F40,0x007C3D00,0x00155400,0x00055000],
+      [0x00000000,0x00000000,0x00000000,0x00550550,0x01011010,0x01011010,0x00551010,0x00111010,0x00411010,0x01010550,0x00000000,0x00000000,0x2AAAAAA0,0x0AAAAAA8,0x0AAAAAA8,0x00000000],
+      [0x00155400,0x01555540,0x055AA550,0x15AAAA54,0xA0808282,0xA2888A22,0xA2888A22,0xA2888A82,0xA2888A82,0xA2888A22,0xA0808222,0xAAAAAAAA,0x15AAAA54,0x055AA550,0x01555540,0x00155400],
+      [0x00055000,0x00500500,0x05155450,0x056AA950,0x11AAAA44,0x00000000,0x0FC3C3F0,0x30CC303C,0x0FCFF03C,0x00CC303C,0x00CC33F0,0x00000000,0x056AA950,0x05155450,0x00500500,0x00055000],
+      [0x002AA800,0x02A55A80,0x0A5555A0,0x29555568,0x26A55AA8,0xA595656A,0x95956566,0x95956566,0x95966566,0x95966566,0xA5695AAA,0x25555558,0x29555568,0x0A5555A0,0x02A55A80,0x002AA800],
+      [0x5AAAAAA5,0x65555559,0x956AA956,0x9AA55AA6,0x96655996,0x95A55A56,0x91414506,0x94415106,0x95015406,0x94415106,0x91414506,0x95A55A56,0x9AA55AA6,0x956AA956,0x65555559,0x5AAAAAA5],
+      [0x00015550,0x00010010,0x55552A10,0x40102A10,0x4A022A14,0x4A8A2A04,0x4AAA0A84,0x4A228A85,0x42808A81,0x52848AA1,0x12848AA1,0x12808001,0x10A02855,0x14A12840,0x04010040,0x05555540],
+      [0x55555550,0x55555550,0x55555550,0x55555550,0x6A96A5A8,0x55996658,0x15996658,0x2A9965A8,0x25596598,0x25596658,0x2A96A658,0x15555554,0x05555555,0x05555555,0x05555555,0x05555555],
+      [0x15555554,0x16A5A5A4,0x15666664,0x16A665A4,0x16566664,0x16A5A664,0x15555554,0x00000000,0x40000001,0x4022A0A1,0x40202221,0x4020A0A1,0x40202221,0x42A2A221,0x40000001,0x55555555],
+      [0x00155400,0x01555540,0x05555550,0x00000000,0x008AA0A8,0x00828208,0x00828208,0x008280A8,0x00828088,0x00828208,0x2A828208,0x00000000,0x00000000,0x05555550,0x01555540,0x00155400]
+    ]
+    self.logo_palettes = [
+      [0x000000,0xE2BD00,0x000000,0x000000],
+      [0x000000,0xE2BD00,0xF0F0E0,0x000000],
+      [0x000000,0xF0F0E0,0x647680,0xFFB060],
+      [0x000000,0xF0F0E0,0xE61914,0x000000],
+      [0x000000,0xE61914,0xF0F0E0,0x000000],
+      [0x000000,0x15566B,0xF01423,0xF0F0F0],
+      [0x000000,0xE61914,0xF0F0E0,0x000000],
+      [0x000000,0xF0F0F0,0x0A95C0,0x000000],
+      [0x000000,0xF0F0F0,0xF4E800,0x000000],
+      [0x000000,0xE61914,0xF0F0E0,0x000000],
+      [0x000000,0xB41E28,0xF0F0E0,0x000000],
+      [0x000000,0xE61914,0xF0F0E0,0x000000]
+    ]
+    # ID pubblici TuneIn: mai ID domestici FV:2 o account Sonos.
+    self.logo_ids = {"16526": 0, "63651": 1, "87442": 2, "25858": 3, "63643": 4, "6535": 5, "1216": 6, "61955": 7, "73738": 8, "16202": 9, "299243": 10, "6684": 11}
+    self.logo_names = {"Radio 105": 0, "Radio Bruno": 1, "Ciccio Riccio": 2, "Discoradio": 3, "R101": 4, "Radio Capital": 5, "Radio Deejay": 6, "Radio Kiss Kiss": 7, "Radio Lattemiele": 8, "RDS 100% Grandi Successi": 9, "RDS Relax": 10, "RTL 102.5": 11, "105": 0, "CiccioRiccio": 2, "RadioCapital": 5, "Deejay": 6, "Kiss Kiss": 7, "Lattemiele": 8, "RDS": 9, "RTL102.5": 11}
+    # END LOCAL RADIO LOGOS 16X16
+  end
+
+  def pick_logo(uri, name)
+    var station = re.match("^x-sonosapi-stream:s([0-9]+)\\?", uri)
+    if station != nil return self.logo_ids.find(station[1], -1) end
+    # Una URI opaca può usare il nome esatto; nessuna corrispondenza parziale.
+    return self.logo_names.find(name, -1)
+  end
+
+  def t(message)
+    return self.translations.find(message, message)
+  end
+
+  def setup()
+    self.client.start()
+    self.tick()
+    self.ticker = timer.every(250, / -> self.tick())
+  end
+
+  def say(message)
+    self.banner = self.t(message)
+    self.banner_until = now_ms() + self.options["message_s"] * 1000
+  end
+
+  def room_name()
+    return self.client.selected == nil ? self.t("SONOS LOCALE") : self.client.selected["room"]
+  end
+
+  def list_entries()
+    self.entries = []
+    if self.view == "rooms" self.entries = self.client.rooms
+    elif self.view == "favorites"
+      for item : self.client.favorites
+        if item["category"] == self.category self.entries.push(item) end
+      end
+    end
+    if (self.view == "rooms" || self.view == "favorites") && self.index >= size(self.entries)
+      self.index = max(0, size(self.entries) - 1)
+    end
+  end
+
+  def go(view)
+    self.view = view
+    self.index = view == "root" ? self.root_index : 0
+    self.banner_until = 0
+    self.context_until = now_ms() + self.options["context_s"] * 1000
+    self.list_entries()
+    self.labels()
+  end
+
+  def back()
+    self.pending_volume = 0
+    self.client.radio_pending = nil
+    if self.view == "root" self.go("now")
+    elif self.view == "help" self.go(self.previous)
+    else self.go("root") end
+  end
+
+  def confirm()
+    if self.client.busy() self.say("Attendere Sonos...") return end
+    if self.view == "root"
+      self.root_index = self.index
+      if self.index == 0 || self.index == 1
+        self.category = self.index == 0 ? "playlist" : "radio"
+        if self.persist store.set("last_category", self.category) end
+        self.go("favorites")
+      elif self.index == 2 self.go("rooms")
+      elif self.index == 3 self.go("now")
+      elif self.index == 4
+        self.client.error = ""
+        if self.client.selected == nil self.client.start()
+        else self.client.refresh() end
+        self.say("Aggiornamento...")
+      else self.previous = "root" self.go("help") end
+    elif self.view == "rooms"
+      if size(self.entries) == 0 self.say("Nessun lettore") return end
+      self.pending_volume = 0
+      var room = self.entries[self.index]
+      if self.client.choose(room["uid"])
+        if self.persist store.set("last_room", room["uid"]) end
+        self.go("root")
+        self.say("Lettore selezionato")
+      end
+    elif self.view == "favorites"
+      if self.client.scanning self.say("Caricamento preferiti...") return end
+      if size(self.entries) == 0 self.say("Nessun preferito Sonos") return end
+      var item = self.entries[self.index]
+      if self.client.play_favorite(item)
+        self.go("now")
+        self.say(self.t("Avvio: ") + item["title"])
+      else self.say(self.client.error == "" ? "Sonos non pronto" : self.client.error) end
+    elif self.view == "help" self.back()
+    elif self.view == "now"
+      var action = self.client.transport == "PLAYING" ? "Pause" : "Play"
+      if action == "Pause" && !self.client.has_action("Pause") && self.client.has_action("Stop")
+        action = "Stop"
+      end
+      if self.client.command(action) self.say(action == "Pause" ? "Pausa..." : (action == "Stop" ? "Riproduzione fermata..." : "Riproduzione..."))
+      else self.say(self.client.error == "" ? "Sonos non pronto" : self.client.error) end
+    end
+    self.labels()
+  end
+
+  def on_knob(event)
+    if event == "press"
+      self.pressed = true
+      self.press_at = now_ms()
+      self.long_done = false
+    elif event == "long" self.check_long()
+    elif event == "release"
+      if self.pressed
+        self.check_long()
+        if !self.long_done self.confirm() end
+      end
+      self.pressed = false
+    elif event == "left" || event == "right"
+      if self.pressed return true end
+      var direction = event == "left" ? -1 : 1
+      if self.view == "now"
+        if self.client.is_radio()
+          var station = self.client.step_radio(direction)
+          if station != nil self.say(self.t("Radio scelta: ") + station["title"])
+          else self.say(self.client.busy() || self.client.scanning ? "Attendere Sonos..." : (self.client.error == "" ? self.client.notice : self.client.error)) end
+        else
+          var action = direction < 0 ? "Previous" : "Next"
+          if self.client.command(action) self.say(direction < 0 ? "Traccia precedente..." : "Traccia successiva...")
+          else self.say(self.client.busy() ? "Attendere Sonos..." : (self.client.error == "" ? self.client.notice : self.client.error)) end
+        end
+      else
+        var count = self.view == "root" ? size(self.roots) : (self.view == "help" ? size(self.help) : size(self.entries))
+        if count > 0 self.index = (self.index + direction + count) % count end
+        self.banner_until = 0
+      end
+      self.labels()
+    end
+    return true
+  end
+
+  def check_long()
+    if self.pressed && !self.long_done && now_ms() - self.press_at >= self.options["long_ms"]
+      self.long_done = true
+      self.back()
+    end
+  end
+
+  def on_button_event(btn, event)
+    if btn == "select"
+      if event == "release"
+        if self.view == "help" self.back()
+        else self.previous = self.view self.go("help") end
+      end
+      return true
+    end
+    if btn == "left" || btn == "right"
+      if event == "press" || event == "repeat"
+        if self.client.ready && self.client.error == "" && (!self.client.busy() || self.client.transaction["kind"] == "volume")
+          var delta = (btn == "left" ? -1 : 1) * self.options["volume_step"]
+          self.pending_volume = clamp(self.pending_volume + delta, -100, 100)
+          self.say("Volume Sonos...")
+        else self.say(self.client.busy() ? "Attendere Sonos..." : "Sonos non pronto") end
+        self.tick()
+      end
+      return true
+    end
+    return false
+  end
+
+  def tick()
+    self.check_long()
+    self.client.tick()
+    if self.pending_volume != 0 && !self.client.busy() && now_ms() >= self.volume_at
+      var delta = self.pending_volume
+      self.pending_volume = 0
+      if self.client.adjust(delta) self.volume_at = now_ms() + 300 end
+    end
+    if self.client.error != "" && self.client.error != self.last_error
+      self.pending_volume = 0
+      self.last_error = self.client.error
+      self.say(self.client.error)
+    end
+    if self.client.error == "" self.last_error = "" end
+    if self.working != "" && !self.client.busy() && self.client.error == ""
+      if self.working == "volume" self.say(self.t("Volume ") + str(self.client.volume) + "%")
+      else self.context_until = now_ms() + self.options["context_s"] * 1000 end
+    end
+    self.working = self.client.transaction == nil ? "" : self.client.transaction["kind"]
+    self.list_entries()
+    self.labels()
+    var counts = {"playlist":0, "radio":0, "unknown":0}
+    for item : self.client.favorites counts[item["category"]] += 1 end
+    var state = {"view":self.view, "top":self.top, "bottom":self.bottom, "index":self.index,
+      "room":self.room_name(), "ready":self.client.ready, "error":self.client.error,
+      "scanning":self.client.scanning, "favorites":size(self.client.favorites), "total":self.client.total,
+      "categories":counts, "rooms":self.client.rooms, "volume":self.client.volume,
+      "transport":self.client.transport, "busy":self.client.busy(), "language":self.language, "actions":self.client.actions,
+      "catalogs":self.client.totals, "radio":self.client.is_radio(), "station":self.client.station,
+      "station_matched":self.client.radio_id != "",
+      "station_artwork":self.client.station_cover != "", "track_artwork":self.client.cover != "",
+      "custom_radio_logo":self.logo_index >= 0, "custom_radio_logo_index":self.logo_index,
+      "radio_pending":self.client.radio_pending == nil ? "" : self.client.radio_pending["title"],
+      "request_kind":self.client.inflight == nil ? "" : self.client.inflight["kind"],
+      "request_age_ms":self.client.inflight == nil ? 0 : now_ms() - self.client.inflight["started_ms"],
+      "queued_requests":size(self.client.jobs), "transaction_kind":self.working}
+    var signature = json.dump(state)
+    if signature != self.last_signature shared.set("state", signature) self.last_signature = signature end
+  end
+
+  def labels()
+    self.artwork = self.options["artwork"] && self.view == "now" && self.client.is_radio()
+    self.logo_index = -1
+    if self.artwork && self.options.find("local_radio_logos") == true
+      var target = self.client.radio_pending
+      if target == nil && self.client.transaction != nil && self.client.transaction["kind"] == "favorite" && self.client.transaction["item"]["category"] == "radio"
+        target = self.client.transaction["item"]
+      end
+      self.logo_index = target == nil ? self.pick_logo(self.client.current_uri, self.client.station) : self.pick_logo(target.find("uri", ""), target["title"])
+    end
+    self.color = self.client.error == "" ? 0xFFFFFF : 0xFFB040
+    self.top = self.room_name()
+    # Resta leggibile per tutta l'attesa, anche oltre la durata degli avvisi.
+    if self.view == "now" && self.client.radio_pending != nil
+      self.top = self.t("Radio scelta: ")
+      self.bottom = self.client.radio_pending["title"]
+      return
+    end
+    if self.view == "now" && self.client.transaction != nil && self.client.transaction["kind"] == "favorite" && self.client.transaction["item"]["category"] == "radio"
+      self.top = self.t("Avvio radio...")
+      self.bottom = self.client.transaction["item"]["title"]
+      return
+    end
+    if self.banner_until > now_ms()
+      self.bottom = self.banner
+      return
+    end
+    if self.view == "root" self.bottom = "> " + self.roots[self.index]
+    elif self.view == "help"
+      self.top = self.t("COMANDI ") + str(self.index + 1) + "/" + str(size(self.help))
+      self.bottom = self.help[self.index]
+    elif self.view == "rooms"
+      self.top = self.t("Scegli lettore")
+      self.bottom = size(self.entries) == 0 ? self.t("Connessione...") : self.entries[self.index]["room"]
+    elif self.view == "favorites"
+      self.top += " / " + self.t(self.category == "radio" ? "Radio " : "Playlist ") + str(size(self.entries) == 0 ? 0 : self.index + 1) + "/" + str(size(self.entries))
+      if self.client.scanning self.bottom = self.t("Carico ") + str(size(self.client.favorites)) + "/" + str(self.client.total)
+      else self.bottom = size(self.entries) == 0 ? self.t("Nessun preferito") : self.entries[self.index]["title"] end
+    else
+      if self.client.error != "" self.bottom = self.t(self.client.error) return end
+      if !self.client.ready self.bottom = self.t("Connessione...") return end
+      if self.client.is_radio()
+        # Il titolo del flusso può essere un file HLS (es. master_ma.m3u8).
+        # La radio mostra sempre stazione e volume della stanza selezionata.
+        self.top = self.client.station == "" ? self.t("Radio") : self.client.station
+        self.bottom = self.room_name()
+        if self.client.transport == "PAUSED_PLAYBACK" self.bottom += " / " + self.t("In pausa")
+        elif self.client.transport == "STOPPED" self.bottom += " / " + self.t("Fermata")
+        elif self.client.transport == "TRANSITIONING" self.bottom += " / " + self.t("Avvio...") end
+        if self.client.volume != nil self.bottom += " / " + self.t("Volume ") + str(self.client.volume) + "%" end
+        return
+      end
+      # Stanza e sorgente ricompaiono; nomi completi, nessuna sigla automatica.
+      if now_ms() < self.context_until || now_ms() % 20000 < self.options["context_s"] * 1000
+        self.bottom = self.client.station != "" ? self.client.station : (self.client.chosen == nil ? self.t(self.client.transport == "PLAYING" ? "In riproduzione" : "In pausa") : self.client.chosen["title"])
+        if self.client.selected["group_size"] > 1 self.top += self.t(" (gruppo)") end
+      else
+        self.artwork = self.options["artwork"]
+        self.top = self.client.station != "" ? self.client.station : self.client.artist
+        self.bottom = self.client.title == "" ? self.t("Nessun titolo") : self.client.title
+        if self.top == "" self.top = self.room_name() end
+      end
+    end
+  end
+
+  def loop()
+    if self.ticker == nil self.tick() end
+  end
+
+  def on_hide()
+    self.pressed = false
+    self.pending_volume = 0
+    self.client.active = false
+    self.client.generation += 1
+    self.client.jobs = []
+    self.client.radio_pending = nil
+    timer.cancel(self.ticker)
+  end
+
+  def draw()
+    clear()
+    if self.artwork
+      var logo = self.client.is_radio() ? self.client.station_cover : ""
+      var drawn = self.logo_index >= 0
+      if drawn
+        for y : 0 .. 15
+          var row = self.logo_rows[self.logo_index][y]
+          for x : 0 .. 15 pixel(x, y, self.logo_palettes[self.logo_index][(row >> (x * 2)) & 3]) end
+        end
+      else drawn = logo != "" && icon(logo, 0, 0) end
+      if !drawn && logo != "" && self.client.station_cover_alt != "" drawn = icon(self.client.station_cover_alt, 0, 0) end
+      if !drawn && self.client.cover != "" drawn = icon(self.client.cover, 0, 0) end
+      if !drawn
+        # Segnale visibile anche durante download o per artwork non decodificabile.
+        rect_fill(0, 0, 16, 16, 0x101010)
+        line(3, 5, 12, 5, 0x40C0FF) line(3, 13, 12, 13, 0x40C0FF)
+        line(3, 5, 3, 13, 0x40C0FF) line(12, 5, 12, 13, 0x40C0FF)
+        line(5, 3, 10, 0, 0xFFFFFF)
+        rect_fill(5, 8, 3, 3, 0xFFFFFF) line(10, 8, 10, 11, 0xFFFFFF)
+      end
+      scroll_text(17, 5, width() - 17, self.top, self.color, self.scroll)
+      scroll_text(17, 14, width() - 17, self.bottom, self.color, self.scroll)
+    else
+      scroll_text(0, 5, width(), self.top, self.color, self.scroll)
+      scroll_text(0, 14, width(), self.bottom, self.color, self.scroll)
+      pixel(0, 8, 0xFFB040)
+      pixel(width() - 1, 8, 0x40C0FF)
+      line(0, 15, 2, 15, self.view == "now" ? 0x40C0FF : 0xFFB040)
+    end
+  end
+end
+
+var m = module("sonos_local_ui")
+m.Remote = Remote
+return m

@@ -1,0 +1,25 @@
+# Testing and verification
+
+The release uses the app and UI from the locally installed 0.2.7 build and the 0.2.3 protocol helper. Publication changes descriptive headers and Hub dependency metadata only; runtime code is preserved.
+
+## Isolated Berry checks
+
+`tests/sonos_local_checks.ax` exercises protocol and UI using a recorder transport and loopback fixture data. It sends no real HTTP or Sonos audio commands and makes no app-setting writes. The publication check on 0.2.7 passed 135 checks covering request sequencing, SOAP payloads, room / coordinator routing, combined catalogs, queue playback, radio switching while busy, timeout handling, language, labels and button behavior.
+
+To run it yourself, install the two helpers, install the check script under a separate name, then launch it from the Web UI. Inspect its `shared` result and the rendered check display. Keep it separate from the main app.
+
+## Native pixels
+
+All twelve station symbols were verified against the TC002 framebuffer during development. In 0.2.7, the revised Capital, Kiss Kiss and Lattemiele symbols were each checked for exact 256-pixel output; the other nine were preserved. Radio 105, Radio Bruno and Ciccio Riccio also remain byte-identical to the original approved asset files.
+
+Run `python3 tools/build_radio_logos.py --check-ui` to reproduce the assets and compare their native packed data with the UI. This host-side check does not contact Sonos or the clock.
+
+## Real-device reads and audio
+
+Development checks on official TC002 firmware 1.1.7 read the Sonos topology, friendly names, favorites, saved playlists and playback information. The user's collection contained eight playlists and twelve stations after the catalogs were combined; these are sample counts, not app limits.
+
+A real playlist start was confirmed by the user. Audio actions across all providers, group configurations, previous / next behavior and volume have not all been certified by physical end-to-end checks. Automated fake-transport checks verify implementation behavior, not provider compatibility.
+
+`tests/sonos_local_read_ui.ax` is an optional separate diagnostic that explicitly rejects Sonos write actions and previews catalogs / artwork from your network. Configure its seed before use. Its results can contain room names and URIs; keep them private unless you sanitize them.
+
+The radio preview was rendered by the actual TC002 with static fixture data, without invoking HTTP or audio controls. Other repository preview images combine that frame with native pixel assets. No private device snapshots or household identifiers are included.

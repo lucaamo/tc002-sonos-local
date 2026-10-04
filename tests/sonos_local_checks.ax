@@ -1,0 +1,438 @@
+# @name Sonos Local Isolated Checks
+# @desc Isolated fake transport checks: no network, audio or persistent writes
+# @author lucaamo
+# @version 0.2.7
+# @ondemand
+
+import sonos_local_protocol
+import sonos_local_ui
+import json
+import string
+
+class Recorder : sonos_local_protocol.Client
+  var sent
+  def dispatch(job)
+    self.sent.push(job)
+  end
+end
+
+class Checks
+  var checks, current, label, preview
+  def init()
+    self.checks = []
+    self.current = "init"
+    self.label = "CHECKS"
+    self.preview = nil
+  end
+  def check(name, value)
+    self.current = name
+    if !value raise "value_error", name end
+    self.checks.push(name)
+  end
+  def fresh()
+    var c = Recorder("127.0.0.1", "", 5, 128)
+    c.sent = []
+    c.request_timeout_ms = 35000
+    c.due = now_ms() + 600000
+    c.topology_due = c.due
+    c.rooms = [{"uid":"ROOM", "room":"Camera da letto", "base":"http://127.0.0.2:1400", "coordinator":"COORD", "coord_base":"http://127.0.0.1:1400", "group_size":2}]
+    c.selected = c.rooms[0]
+    c.ready = true
+    c.scan_complete = true
+    c.volume = 10
+    c.transport = "PLAYING"
+    c.actions = "Play,Pause,Next,Previous"
+    for base : [c.seed, c.selected["base"]]
+      c.services[base] = {}
+      for name : ["RenderingControl", "AVTransport", "ContentDirectory"]
+        c.services[base][name] = {"type":"urn:schemas-upnp-org:service:" + name + ":1", "control":"/verified/" + name}
+      end
+    end
+    return c
+  end
+  def ui(c)
+    return sonos_local_ui.Remote({"seed":"127.0.0.1", "last_room":"", "page_size":5, "favorite_limit":128,
+      "last_category":"playlist", "artwork":true, "local_radio_logos":true, "volume_step":1, "long_ms":700, "message_s":4, "context_s":6, "scroll_speed":80, "request_timeout_s":35}, c)
+  end
+  def short(r)
+    r.on_knob("press")
+    r.on_knob("release")
+  end
+  def reply(c, content)
+    c.tick()
+    var job = c.inflight
+    c.received(job, "<s:Envelope><s:Body><u:" + job["action"] + "Response>" + content + "</u:" + job["action"] + "Response></s:Body></s:Envelope>", 200)
+  end
+  def favorite(c, id, category)
+    var cls = category == "radio" ? "object.item.audioItem.audioBroadcast" : "object.container.playlistContainer"
+    var metadata = "<DIDL-Lite><item id='ref'><dc:title>Nome &amp; completo</dc:title><upnp:class>" + cls + "</upnp:class><desc>Originale</desc></item></DIDL-Lite>"
+    return "<item id='" + id + "'><dc:title>Nome &amp; completo</dc:title><res protocolInfo='originale'>x-test:abc?a=1&amp;b=2</res><r:resMD>" + c.escape(metadata) + "</r:resMD></item>"
+  end
+  def playlist(id, title, uri)
+    return "<container id='" + id + "' parentID='SQ:' restricted='true'><dc:title>" + title + "</dc:title><res protocolInfo='x-rincon-playlist:*:*:*'>" + uri + "</res><upnp:class>object.container.playlistContainer</upnp:class><upnp:albumArtURI>/getaa?saved=1&amp;x=2</upnp:albumArtURI></container>"
+  end
+  def radios()
+    var c = self.fresh()
+    c.favorites = [
+      {"id":"r1", "title":"Radio Uno", "category":"radio", "uri":"x-radio:one", "cover":"https://example.org/one.jpg"},
+      {"id":"p1", "title":"Playlist", "category":"playlist", "uri":"x-playlist:one", "cover":""},
+      {"id":"r2", "title":"Radio Due", "category":"radio", "uri":"x-radio:two", "cover":"https://example.org/two.png"},
+      {"id":"r3", "title":"Radio Tre", "category":"radio", "uri":"x-radio:three", "cover":""}]
+    c.radio = true c.radio_id = "r1" c.station = "Radio Uno" c.current_uri = "x-radio:one"
+    return c
+  end
+  def complete_radio(c, id)
+    self.reply(c, "<Result>" + c.escape("<DIDL-Lite>" + self.favorite(c, id, "radio") + "</DIDL-Lite>") + "</Result>")
+    self.reply(c, "") self.reply(c, "")
+  end
+  def setup()
+    try
+      self.run()
+      self.label = "PASS " + str(size(self.checks))
+      # Anteprima radio con titolo tecnico: trasporto finto, zero HTTP.
+      var c = self.radios()
+      self.preview = self.ui(c)
+      self.preview.options["artwork"] = false
+      c.title = "master_ma.m3u8"
+      self.preview.go("now")
+      shared.set("checks", json.dump({"pass":true, "count":size(self.checks), "checks":self.checks, "real_http_calls":0}))
+    except ..
+      self.label = "FAIL " + self.current
+      shared.set("checks", json.dump({"pass":false, "failed":self.current, "checks":self.checks, "real_http_calls":0}))
+    end
+  end
+  def run()
+    var c = self.fresh()
+    self.check("XML named and numeric UTF8", c.decode("A &amp; B &#233; &#x20AC;") == "A & B é €")
+    self.check("XML one level only", c.decode("&amp;#233;") == "&#233;")
+    self.check("XML multiline", c.tag("<v>a\nb</v>", "v") == "a\nb")
+    self.check("XML single quote attribute", c.attr("<item id='FV:2/1'>", "id") == "FV:2/1")
+    self.check("XML escape roundtrip", c.decode(c.escape("<&\"'>")) == "<&\"'>")
+    self.check("TuneIn profile JPEG uses same station PNG variant", c.radio_art_alternative("https://cdn-profiles.tunein.com/s123/images/logoq.jpg") == "https://cdn-radiotime-logos.tunein.com/s123q.png")
+    self.check("TuneIn profile variant accepts HTTP PNG and query", c.radio_art_alternative("http://cdn-profiles.tunein.com/s456/images/logod.png?x=1") == "https://cdn-radiotime-logos.tunein.com/s456q.png")
+    self.check("other providers keep original artwork", c.radio_art_alternative("https://example.org/s123/images/logoq.jpg") == "")
+    self.check("TuneIn variant requires exact trusted host and station ID", c.radio_art_alternative("https://cdn-profiles.tunein.com.example.org/s123/images/logoq.jpg") == "" && c.radio_art_alternative("https://cdn-profiles.tunein.com/unknown/images/logoq.jpg") == "")
+    var r = self.ui(c)
+    self.check("starts at Playlist menu", r.view == "root" && r.index == 0)
+    r.on_knob("right")
+    self.check("menu rotate no audio", r.index == 1 && size(c.jobs) == 0)
+    c.favorites = [{"id":"FV:2/1", "title":"Radio nome completo", "category":"radio"}, {"id":"FV:2/2", "title":"Playlist nome completo", "category":"playlist"}]
+    self.short(r)
+    self.check("Radio submenu", r.view == "favorites" && r.category == "radio")
+    self.check("full room and radio labels", r.top == "Camera da letto / Radio 1/1" && r.bottom == "Radio nome completo")
+    r.on_knob("press")
+    r.press_at = now_ms() - 800
+    r.on_knob("long")
+    r.on_knob("release")
+    self.check("long release does not launch favorite", r.view == "root" && !c.busy() && size(c.jobs) == 0)
+    r.go("now")
+    r.on_knob("press")
+    self.check("no short action on press", !c.busy())
+    r.on_knob("release")
+    self.check("short release pauses coordinator", c.jobs[0]["action"] == "Pause" && c.jobs[0]["base"] == c.seed)
+    c = self.fresh() r = self.ui(c) r.go("now")
+    r.on_knob("right")
+    self.check("Next on coordinator", c.jobs[0]["action"] == "Next" && c.jobs[0]["base"] == c.seed)
+    c = self.fresh() r = self.ui(c) r.go("now")
+    r.on_knob("left")
+    self.check("Previous on coordinator", c.jobs[0]["action"] == "Previous")
+    c = self.fresh()
+    c.accept({"kind":"actions"}, "<Actions>Set, Stop, Pause, Play, X_DLNA_SeekTime, Next, Previous, X_DLNA_SeekTrackNr</Actions>")
+    self.check("Sonos comma-space actions allow Next", c.command("Next") && c.jobs[0]["action"] == "Next")
+    c = self.fresh()
+    c.actions = "Set, Stop, Pause, Play, Next, Previous"
+    r = self.ui(c) r.go("now") r.on_knob("left")
+    self.check("Sonos comma-space actions allow Previous from knob", c.jobs[0]["action"] == "Previous")
+    c = self.fresh() c.actions = " Next \t,\r\n Previous  , Play "
+    self.check("actions tolerate surrounding ASCII whitespace", c.has_action("Next") && c.has_action("Previous") && c.has_action("Play"))
+    c.actions = "NextTrack, PreviousTrack, NextExtra"
+    self.check("actions compare complete tokens", !c.has_action("Next") && !c.has_action("Previous"))
+    c = self.fresh() r = self.ui(c)
+    r.on_button_event("left", "press")
+    self.check("volume decreases selected room", c.jobs[0]["action"] == "SetRelativeVolume" && c.jobs[0]["base"] == "http://127.0.0.2:1400" && c.jobs[0]["args"]["Adjustment"] == -1)
+    self.reply(c, "<NewVolume>9</NewVolume>")
+    r.tick()
+    self.check("volume confirmed on display", c.volume == 9 && r.bottom == "Volume 9%")
+    c = self.fresh() r = self.ui(c)
+    r.on_button_event("select", "press")
+    r.on_button_event("select", "release")
+    self.check("top middle short opens guide without audio", r.view == "help" && !c.busy())
+    c = self.fresh() r = self.ui(c) r.go("now") c.actions = "Play, Stop"
+    r.on_knob("right")
+    self.check("unsupported Next never sent", size(c.jobs) == 0 && !c.busy())
+    c = self.fresh() r = self.ui(c) r.go("now") c.actions = "Play,Stop"
+    self.short(r)
+    self.check("radio without Pause uses advertised Stop", c.jobs[0]["action"] == "Stop")
+    c = self.fresh() r = self.ui(c) r.go("now") c.actions = "Play, Stop, Pause"
+    self.short(r)
+    self.check("spaced Pause does not fall back to Stop", c.jobs[0]["action"] == "Pause")
+    c = self.fresh() r = self.ui(c) r.index = 2 self.short(r)
+    self.check("room menu full friendly name", r.view == "rooms" && r.bottom == "Camera da letto")
+    self.short(r)
+    self.check("room selection returns root and resets state", r.view == "root" && c.selected["uid"] == "ROOM" && !c.ready)
+    c = self.fresh()
+    self.check("radio selection accepted", c.play_favorite({"id":"FV:2/1", "title":"Radio nome completo", "category":"radio"}))
+    var item = self.favorite(c, "FV:2/1", "radio")
+    self.reply(c, "<Result>" + c.escape("<DIDL-Lite>" + item + "</DIDL-Lite>") + "</Result><NumberReturned>1</NumberReturned>")
+    self.check("radio retains exact URI", c.jobs[0]["args"]["CurrentURI"] == "x-test:abc?a=1&b=2")
+    self.check("radio original metadata and resource preserved", c.jobs[0]["args"]["CurrentURIMetaData"] == "<DIDL-Lite><item id='ref'><dc:title>Nome &amp; completo</dc:title><upnp:class>object.item.audioItem.audioBroadcast</upnp:class><desc>Originale</desc><res protocolInfo='originale'>x-test:abc?a=1&amp;b=2</res></item></DIDL-Lite>")
+    self.check("SOAP body escapes nested DIDL once", c.tag(c.envelope(c.jobs[0]), "CurrentURIMetaData") == c.jobs[0]["args"]["CurrentURIMetaData"])
+    self.reply(c, "")
+    self.check("radio SetURI then Play", c.jobs[0]["action"] == "Play")
+    self.reply(c, "")
+    self.check("radio friendly name stored after success", c.chosen["title"] == "Nome & completo" && !c.busy())
+    c = self.fresh()
+    c.play_favorite({"id":"FV:2/2", "title":"Playlist nome completo", "category":"playlist"})
+    item = self.favorite(c, "FV:2/2", "playlist")
+    self.reply(c, "<Result>" + c.escape("<DIDL-Lite>" + item + "</DIDL-Lite>") + "</Result>")
+    self.check("playlist AddURIToQueue without clear", c.jobs[0]["action"] == "AddURIToQueue")
+    self.reply(c, "<FirstTrackNumberEnqueued>42</FirstTrackNumberEnqueued>")
+    self.check("playlist coordinator queue URI", c.jobs[0]["args"]["CurrentURI"] == "x-rincon-queue:COORD#0")
+    self.reply(c, "")
+    self.check("playlist seek returned first track", c.jobs[0]["action"] == "Seek" && c.jobs[0]["args"]["Target"] == 42)
+    self.reply(c, "")
+    self.check("playlist starts only after seek", c.jobs[0]["action"] == "Play")
+    self.reply(c, "")
+    self.check("playlist full label after success", c.chosen["title"] == "Nome & completo")
+    c = self.fresh()
+    self.check("unknown favorite blocked", !c.play_favorite({"id":"x", "title":"Unknown", "category":"unknown"}) && size(c.jobs) == 0)
+    c.command("Pause") c.tick()
+    c.received(c.inflight, "<s:Envelope><errorCode>701</errorCode></s:Envelope>", 500)
+    self.check("SOAP fault clears transaction without replay", c.error == "Sonos 701" && !c.busy() && size(c.jobs) == 0)
+    c = self.fresh()
+    c.poll() c.tick()
+    var old = c.inflight
+    c.choose("ROOM")
+    c.received(old, "<s:Envelope><CurrentVolume>99</CurrentVolume></s:Envelope>", 200)
+    self.check("stale room response discarded", c.volume == nil)
+    c = self.fresh() c.scan_complete = false c.scanning = true c.choose("ROOM")
+    var scans = 0
+    for job : c.jobs if job["kind"] == "favorites" scans += 1 end end
+    self.check("room selection restarts incomplete scan once", scans == 1 && c.scanning)
+    c = self.fresh() c.refresh()
+    for page : 0 .. 2
+      var xml = "<DIDL-Lite>"
+      for offset : 0 .. 4
+        var n = page * 5 + offset
+        xml += string.replace(self.favorite(c, "FV:2/" + str(n), n < 12 ? "radio" : "playlist"), "x-test:abc", "x-test:" + str(n))
+      end
+      xml += "</DIDL-Lite>"
+      self.reply(c, "<Result>" + c.escape(xml) + "</Result><NumberReturned>5</NumberReturned><TotalMatches>15</TotalMatches><UpdateID>14</UpdateID>")
+    end
+    self.check("FV scan chains to saved Sonos playlists", size(c.favorites) == 15 && c.scanning && c.jobs[0]["args"]["ObjectID"] == "SQ:")
+    var opening = "<DIDL-Lite xmlns:dc='http://purl.org/dc/elements/1.1/' xmlns:upnp='urn:schemas-upnp-org:metadata-1-0/upnp/' xmlns='urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/'>"
+    for page : 0 .. 1
+      var xml = opening
+      var count = page == 0 ? 3 : 2
+      for offset : 0 .. count - 1
+        var n = page == 0 ? offset : 3 + offset
+        xml += self.playlist("SQ:" + str(n), "Playlist Sonos " + str(n), "file:///jffs/settings/savedqueues.rsq#" + str(n))
+      end
+      self.reply(c, "<Result>" + c.escape(xml + "</DIDL-Lite>") + "</Result><NumberReturned>" + str(count) + "</NumberReturned><TotalMatches>5</TotalMatches><UpdateID>28</UpdateID>")
+    end
+    self.check("combined catalogs include all 20 entries", size(c.favorites) == 20 && c.total == 20 && !c.scanning && c.scan_complete)
+    self.check("catalog updates and totals tracked independently", c.update_id["FV:2"] == "14" && c.update_id["SQ:"] == "28" && c.totals["SQ:"] == 5)
+    self.check("index omits full DIDL and resource XML", c.favorites[0].find("metadata") == nil && c.favorites[0].find("resource") == nil)
+    r = self.ui(c) r.go("favorites")
+    self.check("all eight playlists selectable", size(r.entries) == 8 && r.top == "Camera da letto / Playlist 1/8")
+    self.check("saved playlist art resolved against seed", c.favorites[15]["cover"] == c.seed + "/getaa?saved=1&x=2")
+    c.play_favorite(c.favorites[15])
+    var saved = self.playlist("SQ:0", "Playlist Sonos 0", "file:///jffs/settings/savedqueues.rsq#0")
+    self.reply(c, "<Result>" + c.escape(opening + saved + "</DIDL-Lite>") + "</Result>")
+    self.check("saved playlist enqueues exact file URI", c.jobs[0]["action"] == "AddURIToQueue" && c.jobs[0]["args"]["EnqueuedURI"] == "file:///jffs/settings/savedqueues.rsq#0")
+    self.check("saved playlist preserves original container and namespaces", c.jobs[0]["args"]["EnqueuedURIMetaData"] == opening + saved + "</DIDL-Lite>")
+    c = self.fresh() c.refresh()
+    var alias = string.replace(self.favorite(c, "FV:2/alias", "playlist"), "x-test:abc?a=1&amp;b=2", "file:///jffs/settings/savedqueues.rsq#0")
+    self.reply(c, "<Result>" + c.escape("<DIDL-Lite>" + alias + "</DIDL-Lite>") + "</Result><NumberReturned>1</NumberReturned><TotalMatches>1</TotalMatches><UpdateID>9</UpdateID>")
+    self.reply(c, "<Result>" + c.escape(opening + self.playlist("SQ:0", "Stesso nome", "file:///jffs/settings/savedqueues.rsq#0") + self.playlist("SQ:1", "Stesso nome", "file:///jffs/settings/savedqueues.rsq#1") + "</DIDL-Lite>") + "</Result><NumberReturned>2</NumberReturned><TotalMatches>2</TotalMatches><UpdateID>4</UpdateID>")
+    self.check("same URI deduplicated across catalogs, same title retained", size(c.favorites) == 2 && c.total == 2 && c.favorites[1]["id"] == "SQ:1")
+    c.jobs = [] c.poll()
+    self.check("deduplicated total does not restart scan", !c.scanning && size(c.jobs) == 5)
+    c.jobs = []
+    c.accept({"kind":"favorite_check", "args":{"ObjectID":"SQ:"}}, "<UpdateID>5</UpdateID>")
+    self.check("saved playlist update invalidates both catalogs", c.scanning && c.jobs[0]["args"]["ObjectID"] == "FV:2")
+    c = self.fresh() c.poll() c.tick()
+    c.received(c.inflight, "<s:Envelope><CurrentVolume>10</CurrentVolume>", 200)
+    self.check("truncated XML rejected", c.error == "Risposta XML incompleta")
+    c = self.fresh() r = self.ui(c)
+    self.check("language defaults to Italian", r.language == "Italiano" && r.roots[2] == "Lettore")
+    var opts = r.options opts["language"] = "English"
+    r = sonos_local_ui.Remote(opts, c)
+    self.check("English menu labels", r.language == "English" && r.roots[0] == "Playlists" && r.roots[2] == "Player" && r.roots[3] == "Now playing")
+    r.go("help")
+    self.check("English guide", r.top == "CONTROLS 1/8" && r.bottom == "Turn: browse menu")
+    r.go("rooms")
+    self.check("English selector preserves friendly name", r.top == "Select player" && r.bottom == "Camera da letto")
+    c.favorites = [{"id":"x", "title":"Nome originale è qui", "category":"playlist"}]
+    r.category = "playlist" r.go("favorites")
+    self.check("English playlist preserves original name", r.top == "Camera da letto / Playlists 1/1" && r.bottom == "Nome originale è qui")
+    r.say("Attendere Sonos...") r.labels()
+    self.check("English waiting message", r.bottom == "Waiting for Sonos...")
+    r.say(r.t("Avvio: ") + "Nome originale è qui") r.labels()
+    self.check("English dynamic prefix preserves content", r.bottom == "Starting: Nome originale è qui")
+    r.say("Traccia non disponibile") r.labels()
+    self.check("English unavailable track message", r.bottom == "Track unavailable")
+    r.go("now") c.error = "Risposta XML incompleta" r.labels()
+    self.check("English protocol error", r.bottom == "Incomplete XML response")
+    c.error = "" c.ready = false r.labels()
+    self.check("English connection message", r.bottom == "Connecting...")
+    c.ready = true c.selected["group_size"] = 2 c.transport = "PAUSED_PLAYBACK" r.go("now")
+    self.check("English group and playback state", r.top == "Camera da letto (group)" && r.bottom == "Paused")
+    r.go("help") r.index = 5 r.labels()
+    self.check("English radio station guide", r.bottom == "Radio: turn for stations")
+    c = self.fresh()
+    c.favorites = [
+      {"id":"r1", "title":"Radio Uno", "category":"radio", "uri":"x-radio:one", "cover":"https://example.org/one.jpg"},
+      {"id":"p1", "title":"Playlist", "category":"playlist", "uri":"x-playlist:one", "cover":""},
+      {"id":"r2", "title":"Radio Due", "category":"radio", "uri":"x-radio:two", "cover":"https://example.org/two.png"},
+      {"id":"r3", "title":"Radio Tre", "category":"radio", "uri":"x-radio:three", "cover":""}]
+    var radio_md = "<DIDL-Lite><item><dc:title>Radio Uno</dc:title><upnp:class>object.item.audioItem.audioBroadcast</upnp:class></item></DIDL-Lite>"
+    c.accept({"kind":"media", "base":c.seed}, "<CurrentURI>x-radio:one</CurrentURI><CurrentURIMetaData>" + c.escape(radio_md) + "</CurrentURIMetaData>")
+    self.check("radio logo falls back to favorite metadata", c.is_radio() && c.station_cover == "https://example.org/one.jpg" && c.radio_id == "r1")
+    c.accept({"kind":"position", "base":c.seed}, "<TrackMetaData>" + c.escape("<item><dc:title>Canzone</dc:title><upnp:albumArtURI>/track.jpg?a=1&amp;b=2</upnp:albumArtURI></item>") + "</TrackMetaData>")
+    self.check("track art does not overwrite station logo", c.cover == c.seed + "/track.jpg?a=1&b=2" && c.station_cover == "https://example.org/one.jpg")
+    r = self.ui(c) r.go("now")
+    self.check("radio logo and useful room volume stay visible during context", r.artwork && r.top == "Radio Uno" && r.bottom == "Camera da letto / Volume 10%")
+    c.title = "master_ma.m3u8" c.artist = "technical stream metadata"
+    r.context_until = 0 r.labels()
+    self.check("radio ignores technical stream title outside context", r.top == "Radio Uno" && r.bottom == "Camera da letto / Volume 10%")
+    c.volume = 23 r.labels()
+    self.check("radio row tracks selected room volume", r.bottom == "Camera da letto / Volume 23%")
+    c.transport = "PAUSED_PLAYBACK" r.labels()
+    self.check("radio row explains paused playback", r.bottom == "Camera da letto / In pausa / Volume 23%")
+    c.transport = "STOPPED" r.labels()
+    self.check("radio row explains stopped playback", r.bottom == "Camera da letto / Fermata / Volume 23%")
+    c.transport = "TRANSITIONING" c.volume = nil r.labels()
+    self.check("radio buffering does not invent unknown volume", r.bottom == "Camera da letto / Avvio...")
+    var radio_opts = r.options radio_opts["language"] = "English"
+    var english_radio = sonos_local_ui.Remote(radio_opts, c)
+    c.transport = "PAUSED_PLAYBACK" c.volume = 23 english_radio.go("now")
+    self.check("English radio row preserves names and translates status", english_radio.top == "Radio Uno" && english_radio.bottom == "Camera da letto / Paused / Volume 23%")
+    c.station = "" c.transport = "PLAYING" english_radio.labels()
+    self.check("unknown station uses clear radio label without stream title", english_radio.top == "Radio" && english_radio.bottom == "Camera da letto / Volume 23%")
+    var music = self.fresh() music.artist = "Artista" music.title = "Titolo del brano"
+    var music_ui = self.ui(music) music_ui.options["context_s"] = 0 music_ui.go("now")
+    self.check("playlist artist and title display remains available", music_ui.top == "Artista" && music_ui.bottom == "Titolo del brano")
+    c.station = "Radio Uno" c.volume = 10 r.options["language"] = "Italiano"
+    r.on_knob("right")
+    self.check("radio knob goes to next station and skips playlists", c.transaction["item"]["id"] == "r2" && c.jobs[0]["action"] == "Browse" && c.jobs[0]["args"]["ObjectID"] == "r2")
+    r.on_knob("right")
+    self.check("rapid radio rotation keeps latest station without duplicate transaction", size(c.jobs) == 1 && c.transaction["item"]["id"] == "r2" && c.radio_pending["id"] == "r3")
+    self.check("queued station shows friendly name instead of wait banner", r.top == "Radio scelta: " && r.bottom == "Radio Tre")
+    c.transaction = nil c.jobs = [] c.radio_pending = nil
+    r.on_knob("left")
+    self.check("previous station wraps at start", c.transaction["item"]["id"] == "r3")
+    c.transaction = nil c.jobs = [] c.radio_id = "r3"
+    r.on_knob("right")
+    self.check("next station wraps at end", c.transaction["item"]["id"] == "r1")
+    c.transaction = nil c.jobs = [] c.radio_id = ""
+    self.check("external unmatched station starts at first favorite", c.step_radio(1)["id"] == "r1")
+    c.transaction = nil c.jobs = [] c.favorites = []
+    self.check("no favorite radio produces message without command", c.step_radio(-1) == nil && c.notice == "Nessuna radio preferita" && size(c.jobs) == 0)
+    c = self.fresh()
+    c.accept({"kind":"media", "base":c.seed}, "<CurrentURI>x-radio:external</CurrentURI><CurrentURIMetaData>" + c.escape(string.replace(radio_md, "</item>", "<upnp:albumArtURI>/station.jpg</upnp:albumArtURI></item>")) + "</CurrentURIMetaData>")
+    self.check("station logo read from CurrentURIMetaData", c.station_cover == c.seed + "/station.jpg")
+    c.accept({"kind":"media", "base":c.seed}, "<CurrentURI>x-rincon-queue:COORD#0</CurrentURI><CurrentURIMetaData></CurrentURIMetaData>")
+    self.check("external playlist clears radio mode and logo", !c.is_radio() && c.station == "" && c.station_cover == "" && c.radio_id == "")
+    c.poll() c.tick() old = c.inflight
+    c.play_favorite({"id":"radio-new", "category":"radio", "title":"New"})
+    c.received(old, "<s:Envelope><CurrentVolume>99</CurrentVolume></s:Envelope>", 200)
+    self.check("old poll cannot overwrite new station transaction", c.volume == 10 && c.jobs[0]["args"]["ObjectID"] == "radio-new")
+    c = self.radios() r = self.ui(c) r.go("now")
+    r.on_knob("right") r.on_knob("right")
+    r.banner_until = 0 r.labels()
+    self.check("station selection stays visible beyond message timer", r.bottom == "Radio Tre" && c.radio_pending["id"] == "r3")
+    self.complete_radio(c, "r2")
+    self.check("first station ACK keeps next selected station", !c.busy() && c.chosen["id"] == "r2" && c.radio_pending["id"] == "r3")
+    c.tick()
+    self.check("last selected station dispatches immediately after ACK", c.busy() && c.transaction["item"]["id"] == "r3" && c.inflight["args"]["ObjectID"] == "r3" && c.radio_pending == nil && size(c.sent) == 4)
+    self.reply(c, "<Result>" + c.escape("<DIDL-Lite>" + self.favorite(c, "r3", "radio") + "</DIDL-Lite>") + "</Result>")
+    self.reply(c, "") self.reply(c, "")
+    self.check("queued station completes full SOAP chain and unlocks controls", !c.busy() && c.chosen["id"] == "r3")
+    c = self.radios() r = self.ui(c) r.go("now")
+    r.on_knob("right") r.on_knob("right") r.on_knob("right")
+    self.check("three fast turns wrap from latest selection", c.transaction["item"]["id"] == "r2" && c.radio_pending["id"] == "r1" && size(c.jobs) == 1)
+    c = self.radios() r = self.ui(c) r.go("now")
+    r.on_knob("right") r.on_knob("right") r.on_knob("left")
+    self.check("reverse turn cancels queued skip to third station", c.radio_pending["id"] == "r2")
+    self.complete_radio(c, "r2") c.tick()
+    self.check("returning to active target does not restart the stream", c.radio_pending == nil && !c.busy() && c.inflight["kind"] == "volume" && size(c.sent) == 4)
+    c = self.radios() c.radio = false c.radio_id = "" c.play_favorite(c.favorites[0])
+    r = self.ui(c) r.go("now") r.on_knob("right")
+    self.check("knob recognizes a radio still starting from playlist", c.is_radio() && c.transaction["item"]["id"] == "r1" && c.radio_pending["id"] == "r2" && r.bottom == "Radio Due")
+    c = self.radios() c.play_favorite(c.favorites[1])
+    self.check("starting playlist overrides previous radio mode", !c.is_radio() && c.step_radio(1) == nil && c.radio_pending == nil)
+    c = self.radios() r = self.ui(c) r.go("now")
+    r.on_knob("right") r.on_knob("right") r.back()
+    self.check("going back cancels unsubmitted station choice", c.radio_pending == nil && r.view == "root" && c.transaction["item"]["id"] == "r2")
+    c = self.radios() r = self.ui(c) r.options["language"] = "English" r = sonos_local_ui.Remote(r.options, c) r.go("now")
+    r.on_knob("right") r.on_knob("right")
+    self.check("English waiting selection preserves station name", r.top == "Selected station: " && r.bottom == "Radio Tre")
+    c = self.radios() c.step_radio(1) c.step_radio(1) c.tick()
+    c.received(c.inflight, "<s:Envelope><errorCode>701</errorCode></s:Envelope>", 500)
+    self.check("fault discards pending station and never replays writes", c.error == "Sonos 701" && !c.busy() && c.radio_pending == nil && size(c.jobs) == 0)
+    c = self.radios() c.step_radio(1) c.step_radio(1) c.tick() old = c.inflight
+    old["started_ms"] = now_ms() - 35001 c.tick()
+    self.check("missing callback releases busy state with explicit timeout", c.error == "Sonos non risponde" && !c.busy() && c.inflight == nil && c.radio_pending == nil && size(c.jobs) == 0)
+    c.error = "" c.poll() c.tick()
+    var current = c.inflight
+    c.received(old, "<s:Envelope></s:Envelope>", 200)
+    self.check("late timeout callback cannot clear current request", c.inflight == current && c.volume == 10 && c.error == "")
+    c = self.radios() c.command("Pause") c.tick() old = c.inflight
+    c.received(old, "<s:Envelope></s:Envelope>", 200) c.tick() current = c.inflight
+    c.received(old, "<s:Envelope></s:Envelope>", 200)
+    self.check("duplicate callback cannot clear current request", c.inflight == current && current["kind"] == "volume")
+    c = self.radios() c.radio_pending = c.favorites[2] c.choose("ROOM")
+    self.check("room selection cancels pending radio for previous room", c.radio_pending == nil)
+    c = self.radios()
+    self.check("observed Sonos flags change preserves radio identity", c.same_radio("x-sonosapi-stream:s123?sid=333&flags=8292&sn=1", "x-sonosapi-stream:s123?sid=333&flags=8232&sn=1"))
+    self.check("radio identity preserves service and account", !c.same_radio("x-sonosapi-stream:s123?sid=333&flags=8292&sn=1", "x-sonosapi-stream:s123?sid=254&flags=8232&sn=1") && !c.same_radio("x-sonosapi-stream:s123?sid=333&flags=8292&sn=1", "x-sonosapi-stream:s123?sid=333&flags=8232&sn=2"))
+    self.check("radio identity preserves station and other URI parameters", !c.same_radio("x-sonosapi-stream:s123?sid=333&flags=8292&sn=1", "x-sonosapi-stream:s456?sid=333&flags=8232&sn=1") && !c.same_radio("x-sonosapi-stream:s123?sid=333&flags=8292&sn=1&a=1", "x-sonosapi-stream:s123?sid=333&flags=8232&sn=1&a=2"))
+    self.check("flags normalization applies only to verified stream URI form", !c.same_radio("https://example.org/s123?flags=1", "https://example.org/s123?flags=2") && !c.same_radio("x-sonosapi-stream:s123?flags=opaque", "x-sonosapi-stream:s123?flags=2"))
+    c.favorites[2]["uri"] = "x-sonosapi-stream:s123?sid=333&flags=8292&sn=1"
+    var changed = "x-sonosapi-stream:s123?sid=333&flags=8232&sn=1"
+    c.accept({"kind":"media", "base":c.seed}, "<CurrentURI>" + c.escape(changed) + "</CurrentURI><CurrentURIMetaData>" + c.escape("<item><dc:title>Radio Due</dc:title><upnp:class>object.item.audioItem.audioBroadcast</upnp:class></item>") + "</CurrentURIMetaData>")
+    self.check("native flags identify current favorite and its logo", c.radio_id == "r2" && c.station_cover == "https://example.org/two.png")
+    c.step_radio(1)
+    self.check("flags-normalized current station advances to third, not first", c.transaction["item"]["id"] == "r3")
+    c = self.radios() c.favorites[2]["uri"] = "x-sonosapi-stream:s123?sid=333&flags=8292&sn=1"
+    c.chosen = {"id":"r2", "title":"Radio Due", "category":"radio", "uri":c.favorites[2]["uri"], "cover":c.favorites[2]["cover"], "queue_update":nil}
+    c.accept({"kind":"media", "base":c.seed}, "<CurrentURI>" + c.escape(changed) + "</CurrentURI><CurrentURIMetaData></CurrentURIMetaData>")
+    self.check("selected radio remains recognized after native flags change", c.chosen != nil && c.chosen["id"] == "r2" && c.radio_id == "r2" && c.is_radio())
+    c.step_radio(-1)
+    self.check("flags-normalized previous station selects first", c.transaction["item"]["id"] == "r1")
+    c = self.radios() r = self.ui(c)
+    self.check("approved logos follow public station IDs after favorite rename", r.pick_logo("x-sonosapi-stream:s16526?sid=333&flags=8232&sn=1", "Nome personale") == 0 && r.pick_logo("x-sonosapi-stream:s63651?sid=333", "Nome personale") == 1 && r.pick_logo("x-sonosapi-stream:s87442?sid=333", "Nome personale") == 2)
+    self.check("different station ID cannot borrow approved logo by title", r.pick_logo("x-sonosapi-stream:s999?sid=333", "Radio 105") == -1)
+    self.check("opaque source can use exact approved friendly name", r.pick_logo("https://example.org/live", "Radio Bruno") == 1 && r.pick_logo("", "CiccioRiccio") == 2)
+    self.check("similar and other stations keep original logos", r.pick_logo("", "Radio 105 Hits") == -1 && r.pick_logo("", "Radio Bruno Gold") == -1 && r.pick_logo("", "Radio sconosciuta") == -1)
+    var extra_logos = [["25858", "Discoradio"], ["63643", "R101"], ["6535", "Radio Capital"], ["1216", "Radio Deejay"], ["61955", "Radio Kiss Kiss"], ["73738", "Radio Lattemiele"], ["16202", "RDS 100% Grandi Successi"], ["299243", "RDS Relax"], ["6684", "RTL 102.5"]]
+    for i : 0 .. size(extra_logos) - 1
+      self.check("favorite logo ID and exact name: " + extra_logos[i][1], r.pick_logo("x-sonosapi-stream:s" + extra_logos[i][0] + "?sid=333", "Nome personale") == i + 3 && r.pick_logo("", extra_logos[i][1]) == i + 3)
+    end
+    self.check("RDS and RDS Relax cannot share or borrow another station logo", r.pick_logo("x-sonosapi-stream:s299243?sid=333", "RDS") == 10 && r.pick_logo("x-sonosapi-stream:s16202?sid=333", "RDS Relax") == 9 && r.pick_logo("x-sonosapi-stream:s999?sid=333", "Radio Deejay") == -1)
+    c.current_uri = "x-sonosapi-stream:s16526?sid=333" c.station = "Radio 105"
+    c.station_cover = "https://example.org/original.png" r.go("now")
+    self.check("approved radio uses custom image without changing Sonos metadata", r.logo_index == 0 && c.station_cover == "https://example.org/original.png" && c.current_uri == "x-sonosapi-stream:s16526?sid=333" && size(c.jobs) == 0)
+    c.radio_pending = {"id":"bruno", "title":"Radio Bruno", "uri":"x-sonosapi-stream:s63651?sid=333", "category":"radio"} r.labels()
+    self.check("queued radio displays target logo and friendly name", r.logo_index == 1 && r.bottom == "Radio Bruno")
+    c.radio_pending = nil c.transaction = {"kind":"favorite", "item":{"id":"riccio", "title":"Ciccio Riccio", "uri":"x-sonosapi-stream:s87442?sid=333", "category":"radio"}} r.labels()
+    self.check("starting radio displays target logo before ACK", r.logo_index == 2 && r.bottom == "Ciccio Riccio")
+    c.transaction = nil r.options["local_radio_logos"] = false r.labels()
+    self.check("custom logo setting returns to original artwork", r.logo_index == -1 && r.artwork && c.station_cover == "https://example.org/original.png")
+    r.options["local_radio_logos"] = true r.options["artwork"] = false r.labels()
+    self.check("artwork off also suppresses custom logo", r.logo_index == -1 && !r.artwork)
+    r.options["artwork"] = true r.go("root")
+    self.check("menu does not use custom radio layout", r.logo_index == -1 && !r.artwork)
+    c.radio = false c.station = "" c.current_uri = "x-playlist:any" c.artist = "Radio 105" r.go("now")
+    self.check("playlist metadata does not enable approved radio logo", r.logo_index == -1)
+  end
+  def draw()
+    if self.preview != nil self.preview.draw() return end
+    clear()
+    scroll_text(self.label, 0xFFFFFF)
+  end
+  def on_button_event(btn, event) return true end
+  def on_knob(event) return true end
+end
+return Checks()

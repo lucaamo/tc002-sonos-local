@@ -1,0 +1,641 @@
+# @module sonos_local_protocol
+# @name Sonos Local Protocol
+# @desc Bounded direct Sonos SOAP client, used by remote and isolated checks
+# @author lucaamo
+# @version 0.2.3
+# @display 52x16
+# License: PolyForm Noncommercial 1.0.0
+# Required Notice: Copyright © Stephan Mühl (Blueforcer) https://github.com/Blueforcer/awtrix-ng
+
+import string
+
+class Client
+  var seed, remembered, services, rooms, selected, favorites, total, update_id, scanning, totals, scanned, scan_complete
+  var jobs, inflight, generation, active, ready, error, notice, due, topology_due, page_size, limit
+  var volume, transport, actions, artist, title, cover, station, current_uri, chosen, transaction, favorites_due
+  var station_cover, station_cover_alt, radio_id, radio
+  var radio_pending, request_timeout_ms
+
+  def init(seed, remembered, page_size, limit)
+    self.seed = "http://" + seed + ":1400"
+    self.remembered = remembered
+    self.page_size = page_size
+    self.limit = limit
+    self.services = {}
+    self.rooms = []
+    self.selected = nil
+    self.favorites = []
+    self.total = 0
+    self.update_id = {}
+    self.totals = {}
+    self.scanned = {}
+    self.scan_complete = false
+    self.scanning = false
+    self.jobs = []
+    self.inflight = nil
+    self.generation = 1
+    self.active = true
+    self.ready = false
+    self.error = ""
+    self.notice = "Connessione..."
+    self.due = 0
+    self.topology_due = 0
+    self.volume = nil
+    self.transport = ""
+    self.actions = ""
+    self.artist = ""
+    self.title = ""
+    self.cover = ""
+    self.station = ""
+    self.station_cover = ""
+    self.station_cover_alt = ""
+    self.radio_id = ""
+    self.radio = false
+    self.current_uri = ""
+    self.chosen = nil
+    self.transaction = nil
+    self.radio_pending = nil
+    self.request_timeout_ms = nil
+    self.favorites_due = now_ms() + 60000
+  end
+
+  def utf8(code)
+    if code <= 0 || code > 0x10FFFF || (code >= 0xD800 && code <= 0xDFFF)
+      raise "value_error", "invalid XML character"
+    end
+    if code < 128 return string.char(code) end
+    if code < 2048 return string.char(192 + (code >> 6)) + string.char(128 + (code & 63)) end
+    if code < 65536
+      return string.char(224 + (code >> 12)) + string.char(128 + ((code >> 6) & 63)) + string.char(128 + (code & 63))
+    end
+    return string.char(240 + (code >> 18)) + string.char(128 + ((code >> 12) & 63)) + string.char(128 + ((code >> 6) & 63)) + string.char(128 + (code & 63))
+  end
+
+  # Un solo livello: i riferimenti creati da &amp; non vengono decodificati di nuovo.
+  def decode(value)
+    var out = ""
+    var i = 0
+    while i < size(value)
+      if value[i] != "&"
+        var next = string.find(value, "&", i)
+        if next < 0 next = size(value) end
+        out += value[i .. next - 1]
+        i = next
+        continue
+      end
+      var finish = string.find(value, ";", i)
+      if finish < 0 || finish - i > 12 raise "value_error", "invalid XML entity" end
+      var entity = value[i + 1 .. finish - 1]
+      var named = {"lt":"<", "gt":">", "quot":"\"", "apos":"'", "amp":"&"}
+      var replacement = named.find(entity)
+      if replacement == nil
+        var hex = size(entity) > 2 && entity[0 .. 1] == "#x"
+        var digits = entity[(hex ? 2 : 1) .. size(entity) - 1]
+        if entity[0] != "#" || re.match(hex ? "^[0-9a-fA-F]+$" : "^[0-9]+$", digits) == nil
+          raise "value_error", "unknown XML entity"
+        end
+        replacement = self.utf8(int(hex ? "0x" + digits : digits))
+      end
+      out += replacement
+      i = finish + 1
+    end
+    return out
+  end
+
+  def escape(value)
+    for pair : [["&","&amp;"], ["<","&lt;"], [">","&gt;"], ["\"","&quot;"], ["'","&apos;"]]
+      value = string.replace(value, pair[0], pair[1])
+    end
+    return value
+  end
+
+  def tag(xml, name)
+    var match = re.search("<" + name + "(\\s[^>]*)?>((.|\n|\r)*?)</" + name + ">", xml)
+    return match == nil ? "" : self.decode(match[2])
+  end
+
+  def attr(xml, name)
+    var match = re.search("\\s" + name + "=\"([^\"]*)\"", xml)
+    if match != nil return self.decode(match[1]) end
+    match = re.search("\\s" + name + "='([^']*)'", xml)
+    return match == nil ? "" : self.decode(match[1])
+  end
+
+  def add(kind, base, service, action, args)
+    if size(self.jobs) >= 16 raise "value_error", "request queue full" end
+    self.jobs.push({"kind":kind, "base":base, "service":service, "action":action, "args":args, "generation":self.generation})
+  end
+
+  def describe(base)
+    if self.services.find(base) == nil self.add("description", base, "", "", {}) end
+  end
+
+  def start()
+    if re.match("^http://[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+:1400$", self.seed) == nil
+      self.fail("Configurare IP Sonos") return
+    end
+    self.describe(self.seed)
+    self.add("topology", self.seed, "ZoneGroupTopology", "GetZoneGroupState", {})
+  end
+
+  def fail(message)
+    self.error = message
+    self.notice = "Ghiera lunga: menu"
+    self.jobs = []
+    self.scanning = false
+    self.transaction = nil
+    self.radio_pending = nil
+    self.due = now_ms() + 5000
+    self.topology_due = now_ms() + 30000
+  end
+
+  def busy()
+    return self.transaction != nil
+  end
+
+  def choose(uid)
+    if self.busy() return false end
+    for room : self.rooms
+      if room["uid"] != uid continue end
+      self.generation += 1
+      self.jobs = []
+      self.scanning = false
+      self.radio_pending = nil
+      self.selected = room
+      self.remembered = uid
+      self.ready = false
+      self.volume = nil
+      self.transport = ""
+      self.actions = ""
+      self.artist = ""
+      self.title = ""
+      self.cover = ""
+      self.station = ""
+      self.station_cover = ""
+      self.station_cover_alt = ""
+      self.radio_id = ""
+      self.radio = false
+      self.current_uri = ""
+      self.chosen = nil
+      self.error = ""
+      self.describe(room["base"])
+      if room["base"] != room["coord_base"] self.describe(room["coord_base"]) end
+      self.poll()
+      return true
+    end
+    self.fail("Lettore non disponibile")
+    return false
+  end
+
+  def poll()
+    if self.selected == nil return end
+    var base = self.selected["base"]
+    var coord = self.selected["coord_base"]
+    self.add("volume", base, "RenderingControl", "GetVolume", {"InstanceID":0, "Channel":"Master"})
+    self.add("transport", coord, "AVTransport", "GetTransportInfo", {"InstanceID":0})
+    self.add("actions", coord, "AVTransport", "GetCurrentTransportActions", {"InstanceID":0})
+    self.add("position", coord, "AVTransport", "GetPositionInfo", {"InstanceID":0})
+    self.add("media", coord, "AVTransport", "GetMediaInfo", {"InstanceID":0})
+    if self.chosen != nil && self.chosen["category"] == "playlist"
+      self.add("queue_check", coord, "ContentDirectory", "Browse", self.browse("Q:0", 0, "BrowseMetadata"))
+    end
+    self.due = now_ms() + 5000
+    if !self.scan_complete && !self.scanning self.refresh() end
+  end
+
+  def browse(id, start, flag)
+    return {"ObjectID":id, "BrowseFlag":flag, "Filter":"*", "StartingIndex":start, "RequestedCount":self.page_size, "SortCriteria":""}
+  end
+
+  def refresh()
+    if self.selected == nil || self.scanning || self.busy() return false end
+    self.favorites = []
+    self.total = 0
+    self.update_id = {}
+    self.totals = {}
+    self.scanned = {}
+    self.scan_complete = false
+    self.scanning = true
+    self.favorites_due = now_ms() + 60000
+    self.notice = "Preferiti..."
+    self.add("favorites", self.seed, "ContentDirectory", "Browse", self.browse("FV:2", 0, "BrowseDirectChildren"))
+    return true
+  end
+
+  def has_action(action)
+    # Sonos separa spesso le azioni con virgola + spazio; confronto per token intero.
+    for token : string.split(self.actions, ",")
+      var match = re.search("^\\s*([A-Za-z0-9_]+)\\s*$", token)
+      if match != nil && match[1] == action return true end
+    end
+    return false
+  end
+
+  def command(action)
+    if !self.ready || self.busy() || self.error != "" return false end
+    if (action == "Next" || action == "Previous") && !self.has_action(action)
+      self.notice = "Traccia non disponibile" return false
+    end
+    self.transaction = {"kind":"control", "action":action}
+    self.jobs = []
+    self.scanning = false
+    self.add("command_done", self.selected["coord_base"], "AVTransport", action, action == "Play" ? {"InstanceID":0, "Speed":1} : {"InstanceID":0})
+    return true
+  end
+
+  def adjust(delta)
+    if !self.ready || self.busy() || self.error != "" return false end
+    self.transaction = {"kind":"volume"}
+    self.jobs = []
+    self.scanning = false
+    self.add("volume_done", self.selected["base"], "RenderingControl", "SetRelativeVolume", {"InstanceID":0, "Channel":"Master", "Adjustment":delta})
+    return true
+  end
+
+  def play_favorite(item)
+    if !self.ready || self.busy() || self.error != "" || self.scanning return false end
+    if item["category"] == "unknown" self.notice = "Tipo non supportato" return false end
+    self.transaction = {"kind":"favorite", "item":item, "base":self.selected["coord_base"], "uid":self.selected["coordinator"]}
+    # Un poll già in volo non deve rimettere nome/logo della sorgente precedente.
+    self.generation += 1
+    self.jobs = []
+    self.add("favorite", self.seed, "ContentDirectory", "Browse", self.browse(item["id"], 0, "BrowseMetadata"))
+    return true
+  end
+
+  def is_radio()
+    if self.transaction != nil && self.transaction["kind"] == "favorite"
+      return self.transaction["item"]["category"] == "radio"
+    end
+    return self.radio || (self.chosen != nil && self.chosen["category"] == "radio")
+  end
+
+  def step_radio(direction)
+    if !self.ready || self.error != "" || self.scanning return nil end
+    if self.transaction != nil && self.transaction["kind"] == "favorite" && self.transaction["item"]["category"] != "radio" return nil end
+    var stations = []
+    var index = -1
+    var id = self.chosen != nil && self.chosen["category"] == "radio" ? self.chosen["id"] : self.radio_id
+    if self.radio_pending != nil id = self.radio_pending["id"]
+    elif self.transaction != nil && self.transaction["kind"] == "favorite" && self.transaction["item"]["category"] == "radio"
+      id = self.transaction["item"]["id"]
+    end
+    for item : self.favorites
+      if item["category"] != "radio" continue end
+      if item["id"] == id index = size(stations) end
+      stations.push(item)
+    end
+    if size(stations) == 0 self.notice = "Nessuna radio preferita" return nil end
+    if index < 0 index = direction > 0 ? 0 : size(stations) - 1
+    else index = (index + direction + size(stations)) % size(stations) end
+    var item = stations[index]
+    # Una sola scelta in attesa, aggiornata da ogni scatto; nessuna coda di avvii.
+    self.radio_pending = item
+    if !self.busy()
+      self.radio_pending = nil
+      if !self.play_favorite(item) return nil end
+    end
+    return item
+  end
+
+  def art_url(value, base)
+    if string.find(value, "/") == 0 && string.find(value, "//") != 0 value = base + value end
+    return size(value) <= 2048 && re.match("^https?://[^ ]+$", value) != nil ? value : ""
+  end
+
+  def radio_art_alternative(value)
+    # Variante PNG dello stesso ID sul CDN TuneIn, provata per i JPEG rifiutati.
+    var match = re.search("^https?://cdn-profiles\\.tunein\\.com/(s[0-9]+)/images/logo[qgd]\\.(jpg|png)(\\?[^ ]*)?$", value)
+    return match == nil ? "" : "https://cdn-radiotime-logos.tunein.com/" + match[1] + "q.png"
+  end
+
+  def radio_key(uri)
+    # Sonos cambia flags dopo Play (es. 8292 → 8232). È identità, non payload.
+    # SID, account SN e altri parametri restano nel confronto.
+    var match = re.search("^x-sonosapi-stream:(s[0-9]+)\\?(.+)$", uri)
+    if match == nil return uri end
+    var query = ""
+    for token : string.split(match[2], "&")
+      if re.match("^flags=[0-9]+$", token) != nil continue end
+      query += (query == "" ? "" : "&") + token
+    end
+    return "x-sonosapi-stream:" + match[1] + "?" + query
+  end
+
+  def same_radio(uri, other)
+    return self.radio_key(uri) == self.radio_key(other)
+  end
+
+  def radio_context()
+    self.radio_id = ""
+    for item : self.favorites
+      if item["category"] != "radio" || !self.same_radio(item["uri"], self.current_uri) continue end
+      self.radio = true
+      self.radio_id = item["id"]
+      if self.station == "" self.station = item["title"] end
+      if self.station_cover == "" self.station_cover = item["cover"] end
+      break
+    end
+    if self.chosen != nil && self.chosen["category"] == "radio"
+      self.radio = true
+      self.radio_id = self.chosen["id"]
+      if self.station == "" self.station = self.chosen["title"] end
+      if self.station_cover == "" self.station_cover = self.chosen["cover"] end
+    end
+    self.station_cover_alt = self.radio_art_alternative(self.station_cover)
+  end
+
+  def envelope(job)
+    var spec = self.services[job["base"]][job["service"]]
+    var args = ""
+    for key : job["args"].keys()
+      args += "<" + key + ">" + self.escape(str(job["args"][key])) + "</" + key + ">"
+    end
+    return "<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\"><s:Body><u:" + job["action"] + " xmlns:u=\"" + spec["type"] + "\">" + args + "</u:" + job["action"] + "></s:Body></s:Envelope>"
+  end
+
+  # Un solo HTTP in corso. I test sostituiscono esclusivamente questo metodo.
+  def dispatch(job)
+    if job["kind"] == "description"
+      http.get(job["base"] + "/xml/device_description.xml", / b, s -> self.received(job, b, s), {"cap":32768})
+    else
+      var spec = self.services[job["base"]][job["service"]]
+      http.post(job["base"] + spec["control"], self.envelope(job), / b, s -> self.received(job, b, s),
+        {"cap":32768, "headers":{"Content-Type":"text/xml; charset=\"utf-8\"", "SOAPACTION":"\"" + spec["type"] + "#" + job["action"] + "\""}})
+    end
+  end
+
+  def tick()
+    if !self.active return end
+    if self.inflight != nil
+      if self.request_timeout_ms != nil && now_ms() - self.inflight["started_ms"] >= self.request_timeout_ms
+        # Il comando può essere stato accettato: non ripeterlo automaticamente.
+        self.inflight = nil self.generation += 1 self.fail("Sonos non risponde")
+      end
+      return
+    end
+    if self.radio_pending != nil && !self.busy() && !self.scanning && self.error == ""
+      var item = self.radio_pending
+      self.radio_pending = nil
+      # Se gli scatti tornano alla sorgente appena avviata, non riavviarla.
+      if self.chosen == nil || self.chosen["category"] != "radio" || self.chosen["id"] != item["id"]
+        self.play_favorite(item)
+      end
+    end
+    if size(self.jobs) == 0 && !self.busy() && now_ms() >= self.due
+      if self.selected == nil
+        self.error = "" self.start()
+      elif now_ms() >= self.topology_due
+        self.add("topology", self.seed, "ZoneGroupTopology", "GetZoneGroupState", {})
+      elif now_ms() >= self.favorites_due
+        self.favorites_due = now_ms() + 60000
+        for root : ["FV:2", "SQ:"]
+          self.add("favorite_check", self.seed, "ContentDirectory", "Browse", self.browse(root, 0, "BrowseMetadata"))
+        end
+      else
+        self.poll()
+      end
+    end
+    if size(self.jobs) == 0 return end
+    var job = self.jobs[0]
+    self.jobs.remove(0)
+    job["started_ms"] = now_ms()
+    self.inflight = job
+    try self.dispatch(job)
+    except .. self.inflight = nil self.fail("Servizio Sonos assente") end
+  end
+
+  def received(job, body, status)
+    # Un callback oltre il timeout non può sbloccare/cancellare un'altra richiesta.
+    if self.inflight != job return end
+    self.inflight = nil
+    if !self.active || job["generation"] != self.generation return end
+    try
+      if body == nil || status != 200
+        var code = body == nil ? "" : self.tag(body, "errorCode")
+        self.fail("Sonos " + (code == "" ? "HTTP " + str(status) : code)) return
+      end
+      var closing = job["kind"] == "description" ? "</root>" : "</s:Envelope>"
+      if size(body) >= 32768 || string.find(body, closing) < 0
+        self.fail("Risposta XML incompleta") return
+      end
+      self.accept(job, body)
+    except .. self.fail("Metadati non supportati") end
+  end
+
+  def topology(body)
+    var xml = self.tag(body, "ZoneGroupState")
+    var rooms = []
+    for group : re.matchall("<ZoneGroup\\s[^>]*>(.|\n|\r)*?</ZoneGroup>", xml)
+      var uid = self.attr(group, "Coordinator")
+      var members = []
+      var coord_base = ""
+      for member : re.matchall("<ZoneGroupMember\\s[^>]*>", group)
+        var origin = re.search("^(http://[0-9.]+:1400)/", self.attr(member, "Location"))
+        if origin == nil raise "value_error", "invalid location" end
+        var id = self.attr(member, "UUID")
+        if id == uid coord_base = origin[1] end
+        if self.attr(member, "Invisible") != "1"
+          members.push({"uid":id, "room":self.attr(member, "ZoneName"), "base":origin[1], "coordinator":uid})
+        end
+      end
+      if coord_base == "" raise "value_error", "missing coordinator" end
+      for member : members
+        if size(rooms) >= 32 raise "value_error", "too many rooms" end
+        member["coord_base"] = coord_base
+        member["group_size"] = size(members)
+        rooms.push(member)
+      end
+    end
+    if size(rooms) == 0 raise "value_error", "empty topology" end
+    self.rooms = rooms
+    self.topology_due = now_ms() + 30000
+    if self.selected == nil
+      var id = self.remembered
+      var found = false
+      for room : rooms if room["uid"] == id found = true end end
+      if !found id = rooms[0]["uid"] end
+      self.choose(id)
+    else
+      for room : rooms
+        if room["uid"] != self.selected["uid"] continue end
+        if room["base"] != self.selected["base"] || room["coord_base"] != self.selected["coord_base"]
+          self.choose(room["uid"])
+        else
+          self.selected = room
+          self.poll()
+        end
+        return
+      end
+      self.selected = nil
+      self.ready = false
+      self.fail("Lettore non disponibile")
+    end
+  end
+
+  def items(body)
+    var xml = self.tag(body, "Result")
+    if string.find(xml, "</DIDL-Lite>") < 0 raise "value_error", "incomplete DIDL" end
+    var out = []
+    var opening = re.search("<DIDL-Lite(\\s[^>]*)?>", xml)
+    if opening == nil raise "value_error", "missing DIDL root" end
+    for element : ["item", "container"]
+    for item : re.matchall("<" + element + "\\s[^>]*>(.|\n|\r)*?</" + element + ">", xml)
+      if size(out) >= self.page_size raise "value_error", "oversize page" end
+      var metadata = self.tag(item, "r:resMD")
+      # SQ: espone container diretti: conserva il DIDL originale con i namespace.
+      if metadata == "" metadata = opening[0] + item + "</DIDL-Lite>" end
+      var kind = self.tag(metadata, "upnp:class")
+      var category = kind == "object.item.audioItem.audioBroadcast" ? "radio" : (kind == "object.container.playlistContainer" ? "playlist" : "unknown")
+      var resource = re.search("<res(\\s[^>]*)?>((.|\n|\r)*?)</res>", item)
+      var art = self.tag(item, "upnp:albumArtURI")
+      if art == "" art = self.tag(metadata, "upnp:albumArtURI") end
+      out.push({"id":self.attr(item, "id"), "title":self.tag(item, "dc:title"), "category":category,
+        "uri":self.tag(item, "res"), "metadata":metadata, "resource":resource == nil ? "" : resource[0],
+        "cover":self.art_url(art, self.seed)})
+    end
+    end
+    return out
+  end
+
+  def accept(job, body)
+    var kind = job["kind"]
+    if kind == "description"
+      var services = {}
+      for block : re.matchall("<service>(.|\n|\r)*?</service>", body)
+        var urn = self.tag(block, "serviceType")
+        var parts = string.split(urn, ":")
+        var path = self.tag(block, "controlURL")
+        if size(parts) < 2 || string.find(path, "/") != 0 || string.find(path, "//") == 0
+          raise "value_error", "invalid service"
+        end
+        services[parts[-2]] = {"type":urn, "control":path}
+      end
+      self.services[job["base"]] = services
+      if self.remembered == "" && job["base"] == self.seed
+        self.remembered = string.replace(self.tag(body, "UDN"), "uuid:", "")
+      end
+    elif kind == "topology" self.topology(body)
+    elif kind == "volume" || kind == "volume_done"
+      var value = num(self.tag(body, kind == "volume" ? "CurrentVolume" : "NewVolume"))
+      if value == nil || value < 0 || value > 100 raise "value_error", "invalid volume" end
+      self.volume = int(value)
+      if kind == "volume_done" self.transaction = nil end
+    elif kind == "transport" self.transport = self.tag(body, "CurrentTransportState")
+    elif kind == "actions" self.actions = self.tag(body, "Actions")
+    elif kind == "position"
+      var metadata = self.tag(body, "TrackMetaData")
+      self.artist = self.tag(metadata, "dc:creator")
+      self.title = self.tag(metadata, "dc:title")
+      var stream = self.tag(metadata, "r:streamContent")
+      if self.artist == "" && stream != "" self.artist = stream end
+      self.cover = self.art_url(self.tag(metadata, "upnp:albumArtURI"), job["base"])
+    elif kind == "media"
+      self.current_uri = self.tag(body, "CurrentURI")
+      var metadata = self.tag(body, "CurrentURIMetaData")
+      self.radio = self.tag(metadata, "upnp:class") == "object.item.audioItem.audioBroadcast"
+      self.station = self.radio ? self.tag(metadata, "dc:title") : ""
+      self.station_cover = self.radio ? self.art_url(self.tag(metadata, "upnp:albumArtURI"), job["base"]) : ""
+      if self.chosen != nil
+        var same = self.chosen["category"] == "radio" ? self.same_radio(self.chosen["uri"], self.current_uri) : self.chosen["uri"] == self.current_uri
+        if !same self.chosen = nil end
+      end
+      self.radio_context()
+      self.ready = self.volume != nil
+      self.error = ""
+    elif kind == "favorite_check"
+      if self.tag(body, "UpdateID") != self.update_id.find(job["args"]["ObjectID"]) self.refresh() end
+    elif kind == "favorites"
+      var returned = num(self.tag(body, "NumberReturned"))
+      var total = num(self.tag(body, "TotalMatches"))
+      var update = self.tag(body, "UpdateID")
+      var root = job["args"]["ObjectID"]
+      var start = job["args"]["StartingIndex"]
+      if returned == nil || total == nil || returned < 0 || returned > self.page_size || total < 0 || total > self.limit
+        raise "value_error", "favorite count exceeds bounds"
+      end
+      if self.totals.find(root) != nil && self.totals[root] != total raise "value_error", "favorite total changed" end
+      if start != self.scanned.find(root, 0) || start + returned > total raise "value_error", "favorite page exceeds total" end
+      if self.update_id.find(root) != nil && self.update_id[root] != update raise "value_error", "favorites changed" end
+      self.update_id[root] = update
+      self.totals[root] = int(total)
+      self.total = self.totals.find("FV:2", 0) + self.totals.find("SQ:", 0)
+      if self.total > self.limit raise "value_error", "combined favorite count exceeds bounds" end
+      var items = self.items(body)
+      if size(items) != returned || (returned == 0 && start < total) raise "value_error", "invalid favorite page" end
+      for item : items
+        var duplicate = false
+        for old : self.favorites
+          if old["id"] == item["id"] raise "value_error", "duplicate favorite id" end
+          if item["category"] == "playlist" && old["source"] != root && item["uri"] != "" && item["uri"] == old["uri"] && old["category"] == "playlist" duplicate = true end
+        end
+        if !duplicate
+          self.favorites.push({"id":item["id"], "title":item["title"], "category":item["category"], "uri":item["uri"], "cover":item["cover"], "source":root})
+        end
+      end
+      self.scanned[root] = start + int(returned)
+      if start + returned < total
+        self.add("favorites", self.seed, "ContentDirectory", "Browse", self.browse(root, start + int(returned), "BrowseDirectChildren"))
+      elif root == "FV:2"
+        self.add("favorites", self.seed, "ContentDirectory", "Browse", self.browse("SQ:", 0, "BrowseDirectChildren"))
+      else
+        self.scanning = false self.scan_complete = true self.total = size(self.favorites)
+        self.notice = "Preferiti aggiornati" self.radio_context()
+      end
+    elif kind == "favorite"
+      var items = self.items(body)
+      var wanted = self.transaction["item"]
+      if size(items) != 1 || items[0]["id"] != wanted["id"] || items[0]["category"] != wanted["category"]
+        raise "value_error", "favorite changed"
+      end
+      var item = items[0]
+      if item["uri"] == "" || item["metadata"] == "" || item["resource"] == "" raise "value_error", "unplayable favorite" end
+      # Conserva URI/resMD; aggiunge il res originale solo al riferimento riproducibile.
+      var metadata = item["metadata"]
+      if string.find(metadata, "<res") < 0
+        if string.find(metadata, "</item>") >= 0 metadata = string.replace(metadata, "</item>", item["resource"] + "</item>")
+        elif string.find(metadata, "</container>") >= 0 metadata = string.replace(metadata, "</container>", item["resource"] + "</container>")
+        else raise "value_error", "missing DIDL item" end
+      end
+      self.transaction["item"] = item
+      var base = self.transaction["base"]
+      if item["category"] == "radio"
+        self.add("source_set", base, "AVTransport", "SetAVTransportURI", {"InstanceID":0, "CurrentURI":item["uri"], "CurrentURIMetaData":metadata})
+      else
+        # Accoda e avvia la playlist selezionata, senza cancellare la coda precedente.
+        self.add("enqueued", base, "AVTransport", "AddURIToQueue", {"InstanceID":0, "EnqueuedURI":item["uri"], "EnqueuedURIMetaData":metadata, "DesiredFirstTrackNumberEnqueued":0, "EnqueueAsNext":0})
+      end
+    elif kind == "enqueued"
+      var first = num(self.tag(body, "FirstTrackNumberEnqueued"))
+      if first == nil || first < 1 raise "value_error", "invalid queue response" end
+      self.transaction["first"] = int(first)
+      self.add("queue_set", self.transaction["base"], "AVTransport", "SetAVTransportURI", {"InstanceID":0, "CurrentURI":"x-rincon-queue:" + self.transaction["uid"] + "#0", "CurrentURIMetaData":""})
+    elif kind == "queue_set"
+      self.add("source_set", self.transaction["base"], "AVTransport", "Seek", {"InstanceID":0, "Unit":"TRACK_NR", "Target":self.transaction["first"]})
+    elif kind == "source_set"
+      self.add("favorite_done", self.transaction["base"], "AVTransport", "Play", {"InstanceID":0, "Speed":1})
+    elif kind == "favorite_done"
+      var item = self.transaction["item"]
+      self.chosen = {"id":item["id"], "title":item["title"], "category":item["category"], "cover":item["cover"], "uri":item["category"] == "radio" ? item["uri"] : "x-rincon-queue:" + self.transaction["uid"] + "#0", "queue_update":nil}
+      self.current_uri = self.chosen["uri"]
+      self.radio = item["category"] == "radio"
+      self.station = self.radio ? item["title"] : ""
+      self.station_cover = self.radio ? item["cover"] : ""
+      self.cover = "" self.artist = "" self.title = ""
+      self.radio_context()
+      self.transaction = nil
+      self.poll()
+    elif kind == "queue_check"
+      var update = self.tag(body, "UpdateID")
+      if self.chosen != nil
+        if self.chosen["queue_update"] != nil && self.chosen["queue_update"] != update self.chosen = nil
+        else self.chosen["queue_update"] = update end
+      end
+    elif kind == "command_done" self.transaction = nil self.poll()
+    end
+  end
+end
+
+var m = module("sonos_local_protocol")
+m.Client = Client
+return m
