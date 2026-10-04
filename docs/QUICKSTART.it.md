@@ -4,6 +4,8 @@ App Berry per **TC002, display 52×16**, con firmware AWTRIX NG ufficiale, verif
 
 ## Installazione
 
+[Pagina AWTRIX Hub](https://awtrix.de/flow/mH4KFyXKLosV) · [Release GitHub 0.2.7](https://github.com/lucaamo/tc002-sonos-local/releases/tag/v0.2.7). Includi i due moduli richiesti durante l’installazione dal catalogo.
+
 Nell'editor Scripts / Berry del TC002 salva, in questo ordine:
 
 1. `modules/sonos_local_protocol.ax` con nome **sonos_local_protocol**.

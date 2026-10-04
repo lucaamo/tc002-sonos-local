@@ -22,6 +22,10 @@ This is a separate project from [Sonos Remote for Home Assistant](https://github
 
 ## Install
 
+[Install from AWTRIX Hub](https://awtrix.de/flow/mH4KFyXKLosV) · [Download release 0.2.7](https://github.com/lucaamo/tc002-sonos-local/releases/tag/v0.2.7)
+
+The Hub app declares both helper dependencies. Include them when installing. Individual pages: [Protocol](https://awtrix.de/flow/zg8uGt07AUbk) and [UI](https://awtrix.de/flow/wskMqqQkNc33).
+
 Install the two helper modules **first**, then the app, through the AWTRIX NG Scripts / Berry editor in the TC002 Web UI. Use these exact script names:
 
 | File | Script name | Purpose |
