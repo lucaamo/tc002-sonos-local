@@ -3,6 +3,8 @@
 # @author lucaamo
 # @version 0.2.7
 # @display 52x16
+# @requires sonos_local_protocol zg8uGt07AUbk
+# @requires sonos_local_ui wskMqqQkNc33
 # @ondemand
 # License: PolyForm Noncommercial 1.0.0
 # Required Notice: Copyright © Stephan Mühl (Blueforcer) https://github.com/Blueforcer/awtrix-ng
