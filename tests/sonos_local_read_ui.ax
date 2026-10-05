@@ -1,7 +1,7 @@
 # @name Sonos Local Read UI Check
 # @desc Read-only catalogs and real station logo preview; write actions rejected
 # @author lucaamo
-# @version 0.2.6
+# @version 0.2.8
 # @ondemand
 # @config seed text "IP Sonos" default="" maxlen=64
 # @config last_room text "Selected room UID (empty = seed room)" default="" maxlen=96

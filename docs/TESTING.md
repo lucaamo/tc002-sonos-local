@@ -1,10 +1,12 @@
 # Testing and verification
 
-The release uses the app and UI from the locally installed 0.2.7 build and the 0.2.3 protocol helper. Publication changes descriptive headers and Hub dependency metadata only; runtime code is preserved.
+Release 0.2.8 uses app/UI 0.2.8 and protocol helper 0.2.4, matching the locally verified runtime bodies. Distribution headers add display and Hub dependency metadata.
 
 ## Isolated Berry checks
 
 `tests/sonos_local_checks.ax` exercises protocol and UI using a recorder transport and loopback fixture data. It sends no real HTTP or Sonos audio commands and makes no app-setting writes. The publication check on 0.2.7 passed 135 checks covering request sequencing, SOAP payloads, room / coordinator routing, combined catalogs, queue playback, radio switching while busy, timeout handling, language, labels and button behavior.
+
+The 0.2.8 release passed 167 checks on TC002 firmware 1.2.0, including real observed radio metadata formats, missing/technical titles, song updates, state and volume feedback priorities, and stale metadata after room/station changes.
 
 To run it yourself, install the two helpers, install the check script under a separate name, then launch it from the Web UI. Inspect its `shared` result and the rendered check display. Keep it separate from the main app.
 
@@ -17,6 +19,8 @@ Run `python3 tools/build_radio_logos.py --check-ui` to reproduce the assets and 
 ## Real-device reads and audio
 
 Development checks on official TC002 firmware 1.1.7 read the Sonos topology, friendly names, favorites, saved playlists and playback information. The user's collection contained eight playlists and twelve stations after the catalogs were combined; these are sample counts, not app limits.
+
+The 0.2.8 release was also checked on official TC002 firmware 1.2.0 with live radio metadata. The production app displayed the actual station and song, with a native framebuffer capture; these checks did not send audio controls. Temporary diagnostic apps were removed afterwards.
 
 A real playlist start was confirmed by the user. Audio actions across all providers, group configurations, previous / next behavior and volume have not all been certified by physical end-to-end checks. Automated fake-transport checks verify implementation behavior, not provider compatibility.
 

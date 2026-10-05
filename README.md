@@ -1,10 +1,10 @@
 # Sonos Remote Local
 
-**Version 0.2.7 · AWTRIX NG TC002 · 52×16 · Italiano / English**
+**Version 0.2.8 · AWTRIX NG TC002 · 52×16 · Italiano / English**
 
 Control Sonos from the TC002 knob and buttons, with a Berry app running directly on the clock. It talks to your Sonos speakers over the local network using HTTP/SOAP. No Home Assistant, MQTT broker, computer or bridge is required at runtime.
 
-This is a separate project from [Sonos Remote for Home Assistant](https://github.com/lucaamo/tc002-sonos-remote). Both can remain installed. This community beta is intended for the **official TC002 firmware**, tested on **AWTRIX NG 1.1.7**. It is not a TC001 / 32×8 app.
+This is a separate project from [Sonos Remote for Home Assistant](https://github.com/lucaamo/tc002-sonos-remote). Both can remain installed. This community beta is intended for the **official TC002 firmware**, version 0.2.8 tested on **AWTRIX NG 1.2.0** (earlier revisions on 1.1.7). It is not a TC001 / 32×8 app.
 
 ![Sonos Remote Local on the TC002](assets/publication/cover.png)
 
@@ -15,14 +15,14 @@ This is a separate project from [Sonos Remote for Home Assistant](https://github
 - Select a Sonos room by its friendly name. Playback commands follow its group coordinator; volume controls the selected room.
 - Browse radio favorites and playlists, including service playlists saved as Sonos favorites and saved Sonos playlists. The app combines the `FV:2` and `SQ:` catalogs and removes duplicate URIs.
 - Turn the knob during music playback for previous / next track, when the source supports it. During radio playback, turn it for the previous / next favorite station.
-- Show station names, room and volume for radio; artist, title and available artwork for music. Long names scroll instead of being shortened to codes.
+- Show station names and available song metadata for radio, with room, volume and state as the fallback; artist, title and available artwork for music. Long names scroll instead of being shortened to codes.
 - Twelve custom radio symbols drawn as native 16×16 pixels, with an option to use the original station artwork instead.
 - Choose **Italiano** or **English** in the app settings. An on-screen controls guide is available from the middle button.
 - Stay open as an on-demand app until you exit it. It does not return to the carousel after an idle timeout.
 
 ## Install
 
-[Install from AWTRIX Hub](https://awtrix.de/flow/mH4KFyXKLosV) · [Download release 0.2.7](https://github.com/lucaamo/tc002-sonos-local/releases/tag/v0.2.7)
+[Install from AWTRIX Hub](https://awtrix.de/flow/mH4KFyXKLosV) · [Download release 0.2.8](https://github.com/lucaamo/tc002-sonos-local/releases/tag/v0.2.8)
 
 The Hub app declares both helper dependencies. Include them when installing. Individual pages: [Protocol](https://awtrix.de/flow/zg8uGt07AUbk) and [UI](https://awtrix.de/flow/wskMqqQkNc33).
 
@@ -30,9 +30,9 @@ Install the two helper modules **first**, then the app, through the AWTRIX NG Sc
 
 | File | Script name | Purpose |
 | --- | --- | --- |
-| [sonos_local_protocol.ax](modules/sonos_local_protocol.ax) | `sonos_local_protocol` | Sonos LAN protocol helper, version 0.2.3 |
-| [sonos_local_ui.ax](modules/sonos_local_ui.ax) | `sonos_local_ui` | Menus, controls and display, version 0.2.7 |
-| [sonos_local_probe.ax](apps/sonos_local_probe.ax) | `sonos_local_probe` | Sonos Remote Local, version 0.2.7 |
+| [sonos_local_protocol.ax](modules/sonos_local_protocol.ax) | `sonos_local_protocol` | Sonos LAN protocol helper, version 0.2.4 |
+| [sonos_local_ui.ax](modules/sonos_local_ui.ax) | `sonos_local_ui` | Menus, controls and display, version 0.2.8 |
+| [sonos_local_probe.ax](apps/sonos_local_probe.ax) | `sonos_local_probe` | Sonos Remote Local, version 0.2.8 |
 
 The app retains the internal name `sonos_local_probe` for compatibility with existing local installations. Its visible name is **Sonos Remote Local**.
 
@@ -57,11 +57,19 @@ The main menu contains **Playlists, Radio, Player, Now playing, Refresh favorite
 
 Radio changes are sequential. If Sonos is busy, the newest requested station is retained and shown while the current request finishes. A timeout reports an error; playback commands are not automatically retried.
 
+## Radio song information
+
+While a station is playing, its name and logo remain visible and the second line shows the song and artist when Sonos supplies readable metadata. The app understands plain ICY text, DIDL title/creator fields and the structured radio formats observed during development. Technical stream filenames, URLs, placeholders, years and packet identifiers stay hidden.
+
+Without usable song metadata, or while paused, stopped or starting, the second line shows the selected room, volume and playback state. Command feedback keeps priority. Metadata availability depends on the station and the Sonos source.
+
+For an existing installation, update **both helper modules and the main app** to the versions above. Keep their script names to preserve settings.
+
 ## Artwork
 
 The native symbols cover Radio 105, Radio Bruno, Ciccio Riccio, Discoradio, R101, Radio Capital, Radio Deejay, Radio Kiss Kiss, Radio Lattemiele, RDS, RDS Relax and RTL 102.5. Matching uses public station IDs or station names. They are compact, unofficial visual adaptations for the LED matrix, not artwork downloaded from a service.
 
-Disable **Loghi radio personali / Custom radio logos** to prefer original radio artwork. Other stations use available artwork or a visible radio fallback. Some progressive JPEG images cannot currently be decoded by the firmware; enabling custom symbols avoids that issue for the twelve supported stations.
+Disable **Loghi radio personali / Custom radio logos** to prefer original radio artwork. Other stations use available artwork or a visible radio fallback. Artwork availability and decoding depend on the source and firmware; native symbols render without downloading an image.
 
 ## Practical limits
 

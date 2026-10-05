@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.8 — 2026-10-05
+
+- Show the current radio song and artist when readable Sonos metadata is available.
+- Parse DIDL, plain ICY text, TYPE=SNG fields and Song packets without displaying stream filenames, placeholders, query parameters or identifiers.
+- Keep station names and symbols visible; preserve room, volume and playback state as the fallback.
+- Clear previous song metadata when changing room or station.
+- 167 isolated Berry checks passed on TC002 firmware 1.2.0, with zero real HTTP or audio commands.
+- App and UI version: 0.2.8. Protocol helper version: 0.2.4.
+
 ## 0.2.7 — 2026-10-04
 
 - Revised native 16×16 symbols for Radio Capital, Radio Kiss Kiss and Radio Lattemiele.

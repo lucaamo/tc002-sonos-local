@@ -1,7 +1,7 @@
 # @name Sonos Remote Local
 # @desc Direct Sonos: all playlists, radio station knob, room and volume controls
 # @author lucaamo
-# @version 0.2.7
+# @version 0.2.8
 # @display 52x16
 # @requires sonos_local_protocol zg8uGt07AUbk
 # @requires sonos_local_ui wskMqqQkNc33

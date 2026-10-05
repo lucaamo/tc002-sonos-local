@@ -1,7 +1,7 @@
 # @name Sonos Local Isolated Checks
 # @desc Isolated fake transport checks: no network, audio or persistent writes
 # @author lucaamo
-# @version 0.2.7
+# @version 0.2.8
 # @ondemand
 
 import sonos_local_protocol
@@ -85,20 +85,24 @@ class Checks
     self.reply(c, "<Result>" + c.escape("<DIDL-Lite>" + self.favorite(c, id, "radio") + "</DIDL-Lite>") + "</Result>")
     self.reply(c, "") self.reply(c, "")
   end
+  def position(c, title, artist, stream)
+    var metadata = "<item><dc:title>" + c.escape(title) + "</dc:title><dc:creator>" + c.escape(artist) + "</dc:creator><r:streamContent>" + c.escape(stream) + "</r:streamContent></item>"
+    c.accept({"kind":"position", "base":c.seed}, "<TrackMetaData>" + c.escape(metadata) + "</TrackMetaData>")
+  end
   def setup()
     try
       self.run()
       self.label = "PASS " + str(size(self.checks))
-      # Anteprima radio con titolo tecnico: trasporto finto, zero HTTP.
+      # Anteprima del brano radio con dati dimostrativi: zero HTTP.
       var c = self.radios()
       self.preview = self.ui(c)
-      self.preview.options["artwork"] = false
-      c.title = "master_ma.m3u8"
+      c.station = "Radio 105" c.current_uri = "x-sonosapi-stream:s16526?sid=254&flags=32"
+      self.position(c, "chunklist.m3u8", "", "TYPE=SNG|TITLE Titolo del brano|ARTIST Artista|ALBUM ")
       self.preview.go("now")
       shared.set("checks", json.dump({"pass":true, "count":size(self.checks), "checks":self.checks, "real_http_calls":0}))
-    except ..
+    except .. as error, message
       self.label = "FAIL " + self.current
-      shared.set("checks", json.dump({"pass":false, "failed":self.current, "checks":self.checks, "real_http_calls":0}))
+      shared.set("checks", json.dump({"pass":false, "failed":self.current, "error":error, "message":message, "checks":self.checks, "real_http_calls":0}))
     end
   end
   def run()
@@ -292,7 +296,7 @@ class Checks
     c.accept({"kind":"position", "base":c.seed}, "<TrackMetaData>" + c.escape("<item><dc:title>Canzone</dc:title><upnp:albumArtURI>/track.jpg?a=1&amp;b=2</upnp:albumArtURI></item>") + "</TrackMetaData>")
     self.check("track art does not overwrite station logo", c.cover == c.seed + "/track.jpg?a=1&b=2" && c.station_cover == "https://example.org/one.jpg")
     r = self.ui(c) r.go("now")
-    self.check("radio logo and useful room volume stay visible during context", r.artwork && r.top == "Radio Uno" && r.bottom == "Camera da letto / Volume 10%")
+    self.check("radio logo and song title remain visible during context", r.artwork && r.top == "Radio Uno" && r.bottom == "Canzone")
     c.title = "master_ma.m3u8" c.artist = "technical stream metadata"
     r.context_until = 0 r.labels()
     self.check("radio ignores technical stream title outside context", r.top == "Radio Uno" && r.bottom == "Camera da letto / Volume 10%")
@@ -310,6 +314,57 @@ class Checks
     self.check("English radio row preserves names and translates status", english_radio.top == "Radio Uno" && english_radio.bottom == "Camera da letto / Paused / Volume 23%")
     c.station = "" c.transport = "PLAYING" english_radio.labels()
     self.check("unknown station uses clear radio label without stream title", english_radio.top == "Radio" && english_radio.bottom == "Camera da letto / Volume 23%")
+    c = self.radios() r = self.ui(c) r.go("now")
+    self.position(c, "chunklist.m3u8", "", "TYPE=SNG|TITLE Il cielo è blu & tu|ARTIST Artista|ALBUM Album") r.labels()
+    self.check("structured radio metadata exposes title and artist with XML UTF8", c.radio_track() == "Artista - Il cielo è blu & tu" && c.artist == "")
+    self.check("playing radio shows station logo and readable song", r.artwork && r.top == "Radio Uno" && r.bottom == "Artista - Il cielo è blu & tu")
+    self.position(c, "master_ma.m3u8", "", "  TYPE=SNG|TITLE=  Titolo  |ARTIST= Artista |ALBUM=Album ") r.labels()
+    self.check("structured radio equals fields and surrounding whitespace", r.bottom == "Artista - Titolo")
+    self.position(c, "chunklist.m3u8", "", "TYPE=SNG|TITLE Solo titolo|ARTIST |ALBUM ")
+    self.check("radio title without artist stays readable", c.radio_track() == "Solo titolo")
+    self.position(c, "Nome del brano", "Autore", "")
+    self.check("ordinary radio DIDL title and creator remain available", c.radio_track() == "Autore - Nome del brano")
+    self.position(c, "chunklist.m3u8", "", "Autore - Nome dal flusso")
+    self.check("plain ICY stream content remains readable", c.radio_track() == "Autore - Nome dal flusso")
+    c.station = "RDS Relax"
+    self.position(c, "rdsrelax", "", "Song*BRUCI LA CITTA'*IRENE GRANDI*2007*90636f6e-13f4-4c00-a7ee-a21fb3146d18") r.labels()
+    self.check("observed RDS Relax song packet omits year and identifier", r.top == "RDS Relax" && r.bottom == "IRENE GRANDI - BRUCI LA CITTA'")
+    self.position(c, "rdsrelax", "", "Song**IRENE GRANDI*2007*id")
+    self.check("empty song packet and bare station slug do not invent a title", c.radio_track() == "")
+    c.station = "Radio Uno"
+    self.position(c, "Titolo DIDL", "Artista DIDL", "TYPE=SNG|TITLE |ARTIST |ALBUM ")
+    self.check("empty stream fields fall back to readable DIDL metadata", c.radio_track() == "Artista DIDL - Titolo DIDL")
+    self.position(c, "chunklist.m3u8", "", "TYPE=SNG|TITLE LINK * -1|ARTIST |ALBUM ") r.labels()
+    self.check("observed RDS placeholder does not become a fake song", c.radio_track() == "" && r.bottom == "Camera da letto / Volume 10%")
+    for technical : ["master_ma.m3u8", "CHUNKLIST.M3U8?token=x", "lattemiele?DIST=TuneIn&TGT=TuneIn", "https://example.org/stream", "x-sonosapi-stream:s123", "NOT_IMPLEMENTED", "UNKNOWN", "ZPSTR_BUFFERING", "ZPSTR_CONNECTING", "TYPE=SNG|TITLE |ARTIST |ALBUM ", "TYPE=SNG|TITLE SPOT * 100% Grandi Successi * -1|ARTIST |ALBUM "]
+      self.position(c, technical, "", technical)
+      self.check("technical metadata stays hidden: " + technical, c.radio_track() == "")
+    end
+    self.position(c, "Radio Uno", "", "Radio Uno")
+    self.check("station name is not repeated as a song", c.radio_track() == "")
+    self.position(c, "Live forever", "Autore", "")
+    self.check("legitimate title containing live is not discarded", c.radio_track() == "Autore - Live forever")
+    self.position(c, "chunklist.m3u8", "", "TYPE=SNG|TITLE Nuova canzone|ARTIST Nuovo artista|ALBUM ") r.labels()
+    self.check("new poll updates the radio song", r.bottom == "Nuovo artista - Nuova canzone")
+    var english_opts = r.options english_opts["language"] = "English"
+    english_radio = sonos_local_ui.Remote(english_opts, c) english_radio.go("now")
+    self.check("English radio preserves original song metadata", english_radio.bottom == "Nuovo artista - Nuova canzone")
+    c.transport = "PAUSED_PLAYBACK" r.labels()
+    self.check("paused status takes priority over stale song", r.bottom == "Camera da letto / In pausa / Volume 10%")
+    c.transport = "STOPPED" r.labels()
+    self.check("stopped status takes priority over stale song", r.bottom == "Camera da letto / Fermata / Volume 10%")
+    c.transport = "TRANSITIONING" r.labels()
+    self.check("transitioning status takes priority over stale song", r.bottom == "Camera da letto / Avvio... / Volume 10%")
+    c.transport = "PLAYING" r.say("Volume 11%") r.labels()
+    self.check("user volume feedback takes priority over song", r.bottom == "Volume 11%")
+    self.position(c, "", "", "") r.banner_until = 0 r.labels()
+    self.check("missing new song removes previous title", r.bottom == "Camera da letto / Volume 10%")
+    self.position(c, "Brano precedente", "", "")
+    c.accept({"kind":"media", "base":c.seed}, "<CurrentURI>x-radio:two</CurrentURI><CurrentURIMetaData>" + c.escape(string.replace(radio_md, "Radio Uno", "Radio Due")) + "</CurrentURIMetaData>")
+    self.check("external station change clears previous song metadata", c.radio_track() == "" && c.station == "Radio Due")
+    self.position(c, "Brano precedente", "", "") c.choose("ROOM")
+    self.check("room change clears previous stream metadata", c.radio_track() == "" && c.stream_content == "")
+    c = self.radios() r = self.ui(c) r.go("now")
     var music = self.fresh() music.artist = "Artista" music.title = "Titolo del brano"
     var music_ui = self.ui(music) music_ui.options["context_s"] = 0 music_ui.go("now")
     self.check("playlist artist and title display remains available", music_ui.top == "Artista" && music_ui.bottom == "Titolo del brano")
@@ -385,24 +440,24 @@ class Checks
     c = self.radios() c.radio_pending = c.favorites[2] c.choose("ROOM")
     self.check("room selection cancels pending radio for previous room", c.radio_pending == nil)
     c = self.radios()
-    self.check("observed Sonos flags change preserves radio identity", c.same_radio("x-sonosapi-stream:s123?sid=333&flags=8292&sn=1", "x-sonosapi-stream:s123?sid=333&flags=8232&sn=1"))
-    self.check("radio identity preserves service and account", !c.same_radio("x-sonosapi-stream:s123?sid=333&flags=8292&sn=1", "x-sonosapi-stream:s123?sid=254&flags=8232&sn=1") && !c.same_radio("x-sonosapi-stream:s123?sid=333&flags=8292&sn=1", "x-sonosapi-stream:s123?sid=333&flags=8232&sn=2"))
-    self.check("radio identity preserves station and other URI parameters", !c.same_radio("x-sonosapi-stream:s123?sid=333&flags=8292&sn=1", "x-sonosapi-stream:s456?sid=333&flags=8232&sn=1") && !c.same_radio("x-sonosapi-stream:s123?sid=333&flags=8292&sn=1&a=1", "x-sonosapi-stream:s123?sid=333&flags=8232&sn=1&a=2"))
+    self.check("observed Sonos flags change preserves radio identity", c.same_radio("x-sonosapi-stream:s123?sid=333&flags=8292&sn=58", "x-sonosapi-stream:s123?sid=333&flags=8232&sn=58"))
+    self.check("radio identity preserves service and account", !c.same_radio("x-sonosapi-stream:s123?sid=333&flags=8292&sn=58", "x-sonosapi-stream:s123?sid=254&flags=8232&sn=58") && !c.same_radio("x-sonosapi-stream:s123?sid=333&flags=8292&sn=58", "x-sonosapi-stream:s123?sid=333&flags=8232&sn=59"))
+    self.check("radio identity preserves station and other URI parameters", !c.same_radio("x-sonosapi-stream:s123?sid=333&flags=8292&sn=58", "x-sonosapi-stream:s456?sid=333&flags=8232&sn=58") && !c.same_radio("x-sonosapi-stream:s123?sid=333&flags=8292&sn=58&a=1", "x-sonosapi-stream:s123?sid=333&flags=8232&sn=58&a=2"))
     self.check("flags normalization applies only to verified stream URI form", !c.same_radio("https://example.org/s123?flags=1", "https://example.org/s123?flags=2") && !c.same_radio("x-sonosapi-stream:s123?flags=opaque", "x-sonosapi-stream:s123?flags=2"))
-    c.favorites[2]["uri"] = "x-sonosapi-stream:s123?sid=333&flags=8292&sn=1"
-    var changed = "x-sonosapi-stream:s123?sid=333&flags=8232&sn=1"
+    c.favorites[2]["uri"] = "x-sonosapi-stream:s123?sid=333&flags=8292&sn=58"
+    var changed = "x-sonosapi-stream:s123?sid=333&flags=8232&sn=58"
     c.accept({"kind":"media", "base":c.seed}, "<CurrentURI>" + c.escape(changed) + "</CurrentURI><CurrentURIMetaData>" + c.escape("<item><dc:title>Radio Due</dc:title><upnp:class>object.item.audioItem.audioBroadcast</upnp:class></item>") + "</CurrentURIMetaData>")
     self.check("native flags identify current favorite and its logo", c.radio_id == "r2" && c.station_cover == "https://example.org/two.png")
     c.step_radio(1)
     self.check("flags-normalized current station advances to third, not first", c.transaction["item"]["id"] == "r3")
-    c = self.radios() c.favorites[2]["uri"] = "x-sonosapi-stream:s123?sid=333&flags=8292&sn=1"
+    c = self.radios() c.favorites[2]["uri"] = "x-sonosapi-stream:s123?sid=333&flags=8292&sn=58"
     c.chosen = {"id":"r2", "title":"Radio Due", "category":"radio", "uri":c.favorites[2]["uri"], "cover":c.favorites[2]["cover"], "queue_update":nil}
     c.accept({"kind":"media", "base":c.seed}, "<CurrentURI>" + c.escape(changed) + "</CurrentURI><CurrentURIMetaData></CurrentURIMetaData>")
     self.check("selected radio remains recognized after native flags change", c.chosen != nil && c.chosen["id"] == "r2" && c.radio_id == "r2" && c.is_radio())
     c.step_radio(-1)
     self.check("flags-normalized previous station selects first", c.transaction["item"]["id"] == "r1")
     c = self.radios() r = self.ui(c)
-    self.check("approved logos follow public station IDs after favorite rename", r.pick_logo("x-sonosapi-stream:s16526?sid=333&flags=8232&sn=1", "Nome personale") == 0 && r.pick_logo("x-sonosapi-stream:s63651?sid=333", "Nome personale") == 1 && r.pick_logo("x-sonosapi-stream:s87442?sid=333", "Nome personale") == 2)
+    self.check("approved logos follow public station IDs after favorite rename", r.pick_logo("x-sonosapi-stream:s16526?sid=333&flags=8232&sn=58", "Nome personale") == 0 && r.pick_logo("x-sonosapi-stream:s63651?sid=333", "Nome personale") == 1 && r.pick_logo("x-sonosapi-stream:s87442?sid=333", "Nome personale") == 2)
     self.check("different station ID cannot borrow approved logo by title", r.pick_logo("x-sonosapi-stream:s999?sid=333", "Radio 105") == -1)
     self.check("opaque source can use exact approved friendly name", r.pick_logo("https://example.org/live", "Radio Bruno") == 1 && r.pick_logo("", "CiccioRiccio") == 2)
     self.check("similar and other stations keep original logos", r.pick_logo("", "Radio 105 Hits") == -1 && r.pick_logo("", "Radio Bruno Gold") == -1 && r.pick_logo("", "Radio sconosciuta") == -1)

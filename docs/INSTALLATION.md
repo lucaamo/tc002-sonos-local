@@ -2,7 +2,7 @@
 
 ## Requirements
 
-Use a TC002 with the official AWTRIX NG firmware and its Berry script editor. This release was developed and checked on 1.1.7 with a 52×16 display. A TC001 / 32×8 panel is not supported.
+Use a TC002 with the official AWTRIX NG firmware and its Berry script editor. Release 0.2.8 was checked on 1.2.0 with a 52×16 display; earlier revisions were developed on 1.1.7. A TC001 / 32×8 panel is not supported.
 
 The TC002 must be able to reach one Sonos speaker and the other rooms on the same LAN, including Sonos HTTP/SOAP on port 1400. Music services are configured in the Sonos app; this project has no Spotify OAuth or account credentials on the clock.
 
@@ -47,7 +47,9 @@ Last room and last category are remembered by the app. The seed, language and or
 
 **Waiting for Sonos:** an individual request is in progress. The newest radio selection remains pending. If the timeout occurs, an error is shown and the app does not retry audio commands automatically. Refresh or reopen after resolving the network / service issue.
 
-**Artwork fails:** some progressive JPEGs are not decoded by the current firmware. Custom radio symbols are independent of downloads; other sources show a visible radio fallback if their image cannot be drawn.
+**Artwork fails:** artwork availability and decoding depend on the source and firmware. Custom radio symbols are independent of downloads; other sources show a visible radio fallback if their image cannot be drawn.
+
+**No song title on radio:** Sonos must provide readable track metadata. The app reads plain text and supported structured fields, and hides stream filenames and technical placeholders. Without usable metadata, the room, volume and playback state are shown. When updating, replace both helpers (protocol 0.2.4, UI 0.2.8) and the main app (0.2.8).
 
 **A playlist grows the queue:** the implementation adds the playlist to the existing Sonos queue and starts at its first added item. Repeated starts can append repeated entries. Clear the queue in the Sonos app if desired.
 

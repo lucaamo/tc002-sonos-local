@@ -2,7 +2,7 @@
 # @name Sonos Local Protocol
 # @desc Bounded direct Sonos SOAP client, used by remote and isolated checks
 # @author lucaamo
-# @version 0.2.3
+# @version 0.2.4
 # @display 52x16
 # License: PolyForm Noncommercial 1.0.0
 # Required Notice: Copyright © Stephan Mühl (Blueforcer) https://github.com/Blueforcer/awtrix-ng
@@ -13,7 +13,7 @@ class Client
   var seed, remembered, services, rooms, selected, favorites, total, update_id, scanning, totals, scanned, scan_complete
   var jobs, inflight, generation, active, ready, error, notice, due, topology_due, page_size, limit
   var volume, transport, actions, artist, title, cover, station, current_uri, chosen, transaction, favorites_due
-  var station_cover, station_cover_alt, radio_id, radio
+  var station_cover, station_cover_alt, radio_id, radio, stream_content
   var radio_pending, request_timeout_ms
 
   def init(seed, remembered, page_size, limit)
@@ -45,6 +45,7 @@ class Client
     self.actions = ""
     self.artist = ""
     self.title = ""
+    self.stream_content = ""
     self.cover = ""
     self.station = ""
     self.station_cover = ""
@@ -121,6 +122,59 @@ class Client
     return match == nil ? "" : self.decode(match[1])
   end
 
+  # Il titolo HLS non è un brano; i pacchetti TYPE=... non sono testo da mostrare.
+  def readable_metadata(value)
+    if size(value) > 512 return "" end
+    for separator : ["\r", "\n", "\t"] value = string.replace(value, separator, " ") end
+    var match = re.search("^\\s*(.*?)\\s*$", value)
+    value = match == nil ? "" : match[1]
+    var lower = string.tolower(value)
+    if lower == "" || lower == "not_implemented" || lower == "unknown" || lower == "null" || lower == "n/a" || lower == "-" || string.find(lower, "zpstr_") == 0 return "" end
+    if string.find(lower, "type=") == 0 || string.find(lower, "x-sonos") == 0 || string.find(lower, "x-rincon") == 0 return "" end
+    if re.match("^[a-z][a-z0-9+.-]*://", lower) != nil || re.search("\\.(m3u8?|pls|aac|mp3|mp4|ts)(\\?.*)?$", lower) != nil return "" end
+    if re.search("\\?[a-z0-9_.%-]+=", lower) != nil return "" end
+    if re.match("^link\\s*\\*\\s*-?[0-9]+$", lower) != nil return "" end
+    if re.match("^spot\\s*\\*", lower) != nil return "" end
+    if string.replace(lower, " ", "") == string.replace(string.tolower(self.station), " ", "") return "" end
+    return value
+  end
+
+  def radio_track()
+    var title = ""
+    var artist = ""
+    var stream = self.stream_content
+    if size(stream) > 2048 stream = "" end
+    if re.match("^\\s*TYPE=", string.toupper(stream)) != nil
+      # Formato osservato: TYPE=SNG|TITLE titolo|ARTIST artista|ALBUM album.
+      for field : string.split(stream, "|")
+        var match = re.search("^\\s*([A-Za-z]+)(=|\\s)(.*)$", field)
+        if match == nil continue end
+        var key = string.toupper(match[1])
+        if key == "TITLE" title = self.readable_metadata(match[3])
+        elif key == "ARTIST" artist = self.readable_metadata(match[3]) end
+      end
+    elif re.match("^\\s*SONG\\*", string.toupper(stream)) != nil
+      # Formato osservato su RDS Relax: Song*titolo*artista*anno*id.
+      var fields = string.split(stream, "*")
+      if size(fields) >= 3
+        title = self.readable_metadata(fields[1])
+        artist = self.readable_metadata(fields[2])
+      end
+    else
+      # ICY/streamContent può già contenere l'intera dicitura artista - titolo.
+      title = self.readable_metadata(stream)
+    end
+    if title == "" || string.tolower(title) == string.tolower(self.station)
+      title = self.readable_metadata(self.title)
+      artist = self.readable_metadata(self.artist)
+    end
+    if title == "" || string.tolower(title) == string.tolower(self.station) return "" end
+    if artist != "" && artist != title && string.tolower(artist) != string.tolower(self.station)
+      return artist + " - " + title
+    end
+    return title
+  end
+
   def add(kind, base, service, action, args)
     if size(self.jobs) >= 16 raise "value_error", "request queue full" end
     self.jobs.push({"kind":kind, "base":base, "service":service, "action":action, "args":args, "generation":self.generation})
@@ -169,6 +223,7 @@ class Client
       self.actions = ""
       self.artist = ""
       self.title = ""
+      self.stream_content = ""
       self.cover = ""
       self.station = ""
       self.station_cover = ""
@@ -527,11 +582,14 @@ class Client
       var metadata = self.tag(body, "TrackMetaData")
       self.artist = self.tag(metadata, "dc:creator")
       self.title = self.tag(metadata, "dc:title")
-      var stream = self.tag(metadata, "r:streamContent")
-      if self.artist == "" && stream != "" self.artist = stream end
+      self.stream_content = self.tag(metadata, "r:streamContent")
       self.cover = self.art_url(self.tag(metadata, "upnp:albumArtURI"), job["base"])
     elif kind == "media"
+      var previous_uri = self.current_uri
       self.current_uri = self.tag(body, "CurrentURI")
+      if self.radio && previous_uri != "" && !self.same_radio(previous_uri, self.current_uri)
+        self.artist = "" self.title = "" self.stream_content = ""
+      end
       var metadata = self.tag(body, "CurrentURIMetaData")
       self.radio = self.tag(metadata, "upnp:class") == "object.item.audioItem.audioBroadcast"
       self.station = self.radio ? self.tag(metadata, "dc:title") : ""
@@ -621,7 +679,7 @@ class Client
       self.radio = item["category"] == "radio"
       self.station = self.radio ? item["title"] : ""
       self.station_cover = self.radio ? item["cover"] : ""
-      self.cover = "" self.artist = "" self.title = ""
+      self.cover = "" self.artist = "" self.title = "" self.stream_content = ""
       self.radio_context()
       self.transaction = nil
       self.poll()

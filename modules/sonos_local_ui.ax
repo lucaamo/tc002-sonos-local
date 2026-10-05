@@ -2,7 +2,7 @@
 # @name Sonos Local UI
 # @desc Knob menus and room-aware controls for direct Sonos
 # @author lucaamo
-# @version 0.2.7
+# @version 0.2.8
 # @display 52x16
 # @requires sonos_local_protocol zg8uGt07AUbk
 # License: PolyForm Noncommercial 1.0.0
@@ -300,6 +300,7 @@ class Remote
       "categories":counts, "rooms":self.client.rooms, "volume":self.client.volume,
       "transport":self.client.transport, "busy":self.client.busy(), "language":self.language, "actions":self.client.actions,
       "catalogs":self.client.totals, "radio":self.client.is_radio(), "station":self.client.station,
+      "radio_track":self.client.is_radio() ? self.client.radio_track() : "",
       "station_matched":self.client.radio_id != "",
       "station_artwork":self.client.station_cover != "", "track_artwork":self.client.cover != "",
       "custom_radio_logo":self.logo_index >= 0, "custom_radio_logo_index":self.logo_index,
@@ -353,9 +354,13 @@ class Remote
       if self.client.error != "" self.bottom = self.t(self.client.error) return end
       if !self.client.ready self.bottom = self.t("Connessione...") return end
       if self.client.is_radio()
-        # Il titolo del flusso può essere un file HLS (es. master_ma.m3u8).
-        # La radio mostra sempre stazione e volume della stanza selezionata.
+        # Nome/logo della stazione restano visibili; solo metadati leggibili sotto.
         self.top = self.client.station == "" ? self.t("Radio") : self.client.station
+        var track = self.client.radio_track()
+        if self.client.transport == "PLAYING" && track != ""
+          self.bottom = track
+          return
+        end
         self.bottom = self.room_name()
         if self.client.transport == "PAUSED_PLAYBACK" self.bottom += " / " + self.t("In pausa")
         elif self.client.transport == "STOPPED" self.bottom += " / " + self.t("Fermata")
