@@ -1,7 +1,7 @@
 # @name Sonos Remote Local
 # @desc Direct Sonos: all playlists, radio station knob, room and volume controls
 # @author lucaamo
-# @version 0.2.8
+# @version 0.2.9
 # @display 52x16
 # @requires sonos_local_protocol zg8uGt07AUbk
 # @requires sonos_local_ui wskMqqQkNc33
@@ -9,6 +9,7 @@
 # License: PolyForm Noncommercial 1.0.0
 # Required Notice: Copyright © Stephan Mühl (Blueforcer) https://github.com/Blueforcer/awtrix-ng
 # @config language select "Lingua / Language" default=Italiano options=Italiano,English help="Lingua dell'interfaccia / Interface language"
+# @config startup select "Schermata iniziale / Startup screen" default=Menu options="Menu,Now Playing" help="Menu o riproduzione attuale / Menu or current playback; no autoplay"
 # @config seed text "IP Sonos iniziale / Seed IP" default="" maxlen=64
 # @config page_size number "Preferiti per pagina / Page size" default=5 min=1 max=5
 # @config favorite_limit number "Limite preferiti / Favorite limit" default=128 min=15 max=256
@@ -25,7 +26,7 @@
 
 import sonos_local_ui
 
-return sonos_local_ui.Remote({"language":store.get("language"), "seed":store.get("seed"), "page_size":int(store.get("page_size")),
+return sonos_local_ui.Remote({"language":store.get("language"), "startup":store.get("startup"), "seed":store.get("seed"), "page_size":int(store.get("page_size")),
   "favorite_limit":int(store.get("favorite_limit")), "artwork":store.get("artwork"), "local_radio_logos":store.get("local_radio_logos"),
   "volume_step":int(store.get("volume_step")), "long_ms":int(store.get("long_ms")),
   "message_s":int(store.get("message_s")), "context_s":int(store.get("context_s")),

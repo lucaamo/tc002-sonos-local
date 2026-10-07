@@ -1,10 +1,10 @@
 # Sonos Remote Local
 
-**Version 0.2.8 · AWTRIX NG TC002 · 52×16 · Italiano / English**
+**Version 0.2.9 · AWTRIX NG TC002 · 52×16 · Italiano / English**
 
 Control Sonos from the TC002 knob and buttons, with a Berry app running directly on the clock. It talks to your Sonos speakers over the local network using HTTP/SOAP. No Home Assistant, MQTT broker, computer or bridge is required at runtime.
 
-This is a separate project from [Sonos Remote for Home Assistant](https://github.com/lucaamo/tc002-sonos-remote). Both can remain installed. This community beta is intended for the **official TC002 firmware**, version 0.2.8 tested on **AWTRIX NG 1.2.0** (earlier revisions on 1.1.7). It is not a TC001 / 32×8 app.
+This is a separate project from [Sonos Remote for Home Assistant](https://github.com/lucaamo/tc002-sonos-remote). Both can remain installed. This community beta is intended for the **official TC002 firmware**, version 0.2.9 tested on **AWTRIX NG 1.2.2** (earlier revisions on 1.1.7). It is not a TC001 / 32×8 app.
 
 ![Sonos Remote Local on the TC002](assets/publication/cover.png)
 
@@ -18,11 +18,12 @@ This is a separate project from [Sonos Remote for Home Assistant](https://github
 - Show station names and available song metadata for radio, with room, volume and state as the fallback; artist, title and available artwork for music. Long names scroll instead of being shortened to codes.
 - Twelve custom radio symbols drawn as native 16×16 pixels, with an option to use the original station artwork instead.
 - Choose **Italiano** or **English** in the app settings. An on-screen controls guide is available from the middle button.
+- Choose **Menu** or **Now Playing** as the startup screen. Opening Now Playing reads the selected room's current playback without starting or resuming music.
 - Stay open as an on-demand app until you exit it. It does not return to the carousel after an idle timeout.
 
 ## Install
 
-[Install from AWTRIX Hub](https://awtrix.de/flow/mH4KFyXKLosV) · [Download release 0.2.8](https://github.com/lucaamo/tc002-sonos-local/releases/tag/v0.2.8)
+[Install from AWTRIX Hub](https://awtrix.de/flow/mH4KFyXKLosV) · [Download release 0.2.9](https://github.com/lucaamo/tc002-sonos-local/releases/tag/v0.2.9)
 
 The Hub app declares both helper dependencies. Include them when installing. Individual pages: [Protocol](https://awtrix.de/flow/zg8uGt07AUbk) and [UI](https://awtrix.de/flow/wskMqqQkNc33).
 
@@ -31,14 +32,16 @@ Install the two helper modules **first**, then the app, through the AWTRIX NG Sc
 | File | Script name | Purpose |
 | --- | --- | --- |
 | [sonos_local_protocol.ax](modules/sonos_local_protocol.ax) | `sonos_local_protocol` | Sonos LAN protocol helper, version 0.2.4 |
-| [sonos_local_ui.ax](modules/sonos_local_ui.ax) | `sonos_local_ui` | Menus, controls and display, version 0.2.8 |
-| [sonos_local_probe.ax](apps/sonos_local_probe.ax) | `sonos_local_probe` | Sonos Remote Local, version 0.2.8 |
+| [sonos_local_ui.ax](modules/sonos_local_ui.ax) | `sonos_local_ui` | Menus, controls and display, version 0.2.9 |
+| [sonos_local_probe.ax](apps/sonos_local_probe.ax) | `sonos_local_probe` | Sonos Remote Local, version 0.2.9 |
 
 The app retains the internal name `sonos_local_probe` for compatibility with existing local installations. Its visible name is **Sonos Remote Local**.
 
 Open the app settings, enter the IP address of **one Sonos speaker** under **IP Sonos iniziale / Seed IP**, save, and launch the app from the clock menu or Web UI. The app reads the Sonos topology to discover rooms and group coordinators. The clock must be able to reach the speakers on the LAN, including TCP port 1400. A DHCP reservation for the seed speaker is useful.
 
 Select **Lingua / Language → Italiano or English** and restart the app to apply the language. Italian is the default. The firmware menus and Sonos-provided names keep their own language.
+
+Choose **Schermata iniziale / Startup screen → Menu or Now Playing**. Menu is the default, preserving existing behavior. Save and reopen the app to apply the change. Now Playing displays the remembered room's playback, artwork and radio metadata when available; paused or stopped playback stays that way. Hold the knob to open the main menu, including Playlists, Radio and Player.
 
 See [detailed setup and troubleshooting](docs/INSTALLATION.md) and the [guida rapida in italiano](docs/QUICKSTART.it.md).
 
@@ -63,7 +66,7 @@ While a station is playing, its name and logo remain visible and the second line
 
 Without usable song metadata, or while paused, stopped or starting, the second line shows the selected room, volume and playback state. Command feedback keeps priority. Metadata availability depends on the station and the Sonos source.
 
-For an existing installation, update **both helper modules and the main app** to the versions above. Keep their script names to preserve settings.
+To update from 0.2.8, replace the **UI helper and main app** with 0.2.9. The protocol helper remains 0.2.4. Keep the existing script names to preserve settings; the new startup setting defaults to Menu.
 
 ## Artwork
 

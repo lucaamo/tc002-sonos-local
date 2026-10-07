@@ -2,7 +2,7 @@
 
 ## Requirements
 
-Use a TC002 with the official AWTRIX NG firmware and its Berry script editor. Release 0.2.8 was checked on 1.2.0 with a 52×16 display; earlier revisions were developed on 1.1.7. A TC001 / 32×8 panel is not supported.
+Use a TC002 with the official AWTRIX NG firmware and its Berry script editor. Release 0.2.9 was checked on 1.2.2 with a 52×16 display; earlier revisions were developed on 1.1.7. A TC001 / 32×8 panel is not supported.
 
 The TC002 must be able to reach one Sonos speaker and the other rooms on the same LAN, including Sonos HTTP/SOAP on port 1400. Music services are configured in the Sonos app; this project has no Spotify OAuth or account credentials on the clock.
 
@@ -14,7 +14,8 @@ The TC002 must be able to reach one Sonos speaker and the other rooms on the sam
 4. Add `modules/sonos_local_ui.ax` as **sonos_local_ui**, save and check that there is no compile error. Both helpers use `@module` and are not carousel apps.
 5. Add `apps/sonos_local_probe.ax` as **sonos_local_probe**, save and check that there is no compile error.
 6. Open this app's settings. Enter a Sonos speaker IP under **IP Sonos iniziale / Seed IP**, choose **Lingua / Language**, and save.
-7. Launch **Sonos Remote Local** from the device menu or Web UI. Allow the bounded catalog scan to finish before selecting favorites.
+7. Optionally choose **Startup screen → Now Playing** to open current playback directly. **Menu** remains the default; this setting does not start or resume music. Save and reopen the app after changing it.
+8. Launch **Sonos Remote Local** from the device menu or Web UI. Allow the bounded catalog scan to finish before selecting favorites.
 
 For an update, back up your scripts and settings, replace the helpers before the main app, retain the same script names, and check the seed IP and language before relaunching. The existing Home Assistant Sonos Remote app can remain installed.
 
@@ -49,7 +50,7 @@ Last room and last category are remembered by the app. The seed, language and or
 
 **Artwork fails:** artwork availability and decoding depend on the source and firmware. Custom radio symbols are independent of downloads; other sources show a visible radio fallback if their image cannot be drawn.
 
-**No song title on radio:** Sonos must provide readable track metadata. The app reads plain text and supported structured fields, and hides stream filenames and technical placeholders. Without usable metadata, the room, volume and playback state are shown. When updating, replace both helpers (protocol 0.2.4, UI 0.2.8) and the main app (0.2.8).
+**No song title on radio:** Sonos must provide readable track metadata. The app reads plain text and supported structured fields, and hides stream filenames and technical placeholders. Without usable metadata, the room, volume and playback state are shown. When updating, replace both helpers (protocol 0.2.4, UI 0.2.9) and the main app (0.2.9).
 
 **A playlist grows the queue:** the implementation adds the playlist to the existing Sonos queue and starts at its first added item. Repeated starts can append repeated entries. Clear the queue in the Sonos app if desired.
 

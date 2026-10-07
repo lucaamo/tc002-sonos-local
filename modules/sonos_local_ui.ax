@@ -2,7 +2,7 @@
 # @name Sonos Local UI
 # @desc Knob menus and room-aware controls for direct Sonos
 # @author lucaamo
-# @version 0.2.8
+# @version 0.2.9
 # @display 52x16
 # @requires sonos_local_protocol zg8uGt07AUbk
 # License: PolyForm Noncommercial 1.0.0
@@ -49,7 +49,9 @@ class Remote
     for i : 0 .. size(self.help) - 1 self.help[i] = self.t(self.help[i]) end
     self.category = options["last_category"] == "radio" ? "radio" : "playlist"
     self.root_index = self.category == "radio" ? 1 : 0
-    self.view = "root"
+    # Missing or unrecognized settings keep the existing menu startup.
+    # Selecting a view never sends a Sonos playback command.
+    self.view = options.find("startup") == "Now Playing" ? "now" : "root"
     self.index = self.root_index
     self.entries = []
     self.previous = "root"

@@ -1,10 +1,10 @@
-# Guida rapida — Sonos Remote Local 0.2.8
+# Guida rapida — Sonos Remote Local 0.2.9
 
-App Berry per **TC002, display 52×16**, con firmware AWTRIX NG ufficiale, versione 0.2.8 verificata su firmware 1.2.0. Comunica direttamente con Sonos sulla rete locale: durante l'uso non servono Home Assistant, MQTT o un computer.
+App Berry per **TC002, display 52×16**, con firmware AWTRIX NG ufficiale, versione 0.2.9 verificata su firmware 1.2.2. Comunica direttamente con Sonos sulla rete locale: durante l'uso non servono Home Assistant, MQTT o un computer.
 
 ## Installazione
 
-[Pagina AWTRIX Hub](https://awtrix.de/flow/mH4KFyXKLosV) · [Release GitHub 0.2.8](https://github.com/lucaamo/tc002-sonos-local/releases/tag/v0.2.8). Includi i due moduli richiesti durante l’installazione dal catalogo. Per aggiornare, sostituisci entrambi i moduli (protocollo 0.2.4, UI 0.2.8) e l’app 0.2.8, mantenendo gli stessi nomi per conservare le impostazioni.
+[Pagina AWTRIX Hub](https://awtrix.de/flow/mH4KFyXKLosV) · [Release GitHub 0.2.9](https://github.com/lucaamo/tc002-sonos-local/releases/tag/v0.2.9). Includi i due moduli richiesti durante l’installazione dal catalogo. Per passare da 0.2.8 a 0.2.9 sostituisci il modulo UI e l’app; il protocollo resta 0.2.4. Mantieni gli stessi nomi per conservare le impostazioni.
 
 Nell'editor Scripts / Berry del TC002 salva, in questo ordine:
 
@@ -13,6 +13,8 @@ Nell'editor Scripts / Berry del TC002 salva, in questo ordine:
 3. `apps/sonos_local_probe.ax` con nome **sonos_local_probe**.
 
 Apri le impostazioni dell'app, inserisci l'IP di un lettore Sonos in **IP Sonos iniziale / Seed IP** e scegli **Lingua / Language → Italiano o English**. Salva e avvia **Sonos Remote Local**. Riavvia l'app quando cambi lingua. I nomi dei dispositivi e dei contenuti arrivano da Sonos.
+
+Scegli **Schermata iniziale / Startup screen → Menu oppure Now Playing**. Menu è il comportamento predefinito. Now Playing apre la riproduzione attuale della stanza ricordata, senza avviare musica o togliere la pausa. Salva e riapri l’app; una pressione lunga della ghiera torna al menu Playlist / Radio / Lettore.
 
 ## Uso
 

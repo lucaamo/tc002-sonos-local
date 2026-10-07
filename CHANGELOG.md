@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.9 — 2026-10-07
+
+- Add **Startup screen: Menu / Now Playing**, with Menu as the existing default.
+- Open the remembered room's current music or radio screen without starting, resuming or changing playback.
+- Keep the long knob press as the route back to the main menu.
+- Preserve existing settings and fall back to Menu for missing or unrecognized startup values.
+- 177 isolated Berry checks passed on official TC002 firmware 1.2.2. Both startup views were also checked against live Sonos data with a read-only transport.
+- App and UI version: 0.2.9. Protocol helper remains 0.2.4.
+
 ## 0.2.8 — 2026-10-05
 
 - Show the current radio song and artist when readable Sonos metadata is available.

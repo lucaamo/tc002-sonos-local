@@ -1,7 +1,7 @@
 # @name Sonos Local Isolated Checks
 # @desc Isolated fake transport checks: no network, audio or persistent writes
 # @author lucaamo
-# @version 0.2.8
+# @version 0.2.9
 # @ondemand
 
 import sonos_local_protocol
@@ -118,6 +118,38 @@ class Checks
     self.check("TuneIn variant requires exact trusted host and station ID", c.radio_art_alternative("https://cdn-profiles.tunein.com.example.org/s123/images/logoq.jpg") == "" && c.radio_art_alternative("https://cdn-profiles.tunein.com/unknown/images/logoq.jpg") == "")
     var r = self.ui(c)
     self.check("starts at Playlist menu", r.view == "root" && r.index == 0)
+    var startup_client = self.fresh()
+    var startup_options = self.ui(startup_client).options
+    startup_options["startup"] = "Menu" startup_options["last_category"] = "radio"
+    var startup_ui = sonos_local_ui.Remote(startup_options, startup_client)
+    self.check("explicit Menu startup remembers category without audio", startup_ui.view == "root" && startup_ui.index == 1 && size(startup_client.jobs) == 0)
+    startup_options["startup"] = "unknown"
+    startup_ui = sonos_local_ui.Remote(startup_options, startup_client)
+    self.check("unknown startup setting preserves menu", startup_ui.view == "root" && startup_ui.index == 1)
+    startup_options["startup"] = "Now Playing" startup_options["context_s"] = 0
+    startup_client.artist = "Artista" startup_client.title = "Brano in corso"
+    startup_ui = sonos_local_ui.Remote(startup_options, startup_client) startup_ui.labels()
+    self.check("Now Playing startup shows current music without audio", startup_ui.view == "now" && startup_ui.top == "Artista" && startup_ui.bottom == "Brano in corso" && startup_client.transport == "PLAYING" && startup_client.volume == 10 && size(startup_client.jobs) == 0)
+    startup_ui.on_knob("press") startup_ui.press_at = now_ms() - 800
+    startup_ui.on_knob("long") startup_ui.on_knob("release")
+    self.check("Now Playing startup hold opens remembered menu without audio", startup_ui.view == "root" && startup_ui.index == 1 && size(startup_client.jobs) == 0)
+    startup_ui.on_knob("press") startup_ui.press_at = now_ms() - 800
+    startup_ui.on_knob("long") startup_ui.on_knob("release")
+    self.check("startup menu hold returns to current playback without audio", startup_ui.view == "now" && size(startup_client.jobs) == 0)
+    startup_client.transport = "PAUSED_PLAYBACK"
+    startup_ui = sonos_local_ui.Remote(startup_options, startup_client) startup_ui.labels()
+    self.check("Now Playing startup never resumes paused music", startup_ui.view == "now" && startup_client.transport == "PAUSED_PLAYBACK" && size(startup_client.jobs) == 0)
+    self.short(startup_ui)
+    self.check("Now Playing startup resumes only on explicit short click", startup_client.jobs[0]["action"] == "Play")
+    startup_client = self.fresh() startup_client.transport = "STOPPED"
+    startup_ui = sonos_local_ui.Remote(startup_options, startup_client) startup_ui.labels()
+    self.check("Now Playing startup never starts stopped music", startup_ui.view == "now" && startup_client.transport == "STOPPED" && size(startup_client.jobs) == 0)
+    startup_client.ready = false startup_client.selected = nil
+    startup_ui = sonos_local_ui.Remote(startup_options, startup_client) startup_ui.labels()
+    self.check("Now Playing startup handles unavailable room", startup_ui.view == "now" && startup_ui.bottom == "Connessione..." && size(startup_client.jobs) == 0)
+    startup_client = self.radios()
+    startup_ui = sonos_local_ui.Remote(startup_options, startup_client) startup_ui.labels()
+    self.check("Now Playing startup supports existing radio without selecting it", startup_ui.view == "now" && startup_ui.top == "Radio Uno" && startup_client.current_uri == "x-radio:one" && size(startup_client.jobs) == 0)
     r.on_knob("right")
     self.check("menu rotate no audio", r.index == 1 && size(c.jobs) == 0)
     c.favorites = [{"id":"FV:2/1", "title":"Radio nome completo", "category":"radio"}, {"id":"FV:2/2", "title":"Playlist nome completo", "category":"playlist"}]

@@ -1,6 +1,6 @@
 # Testing and verification
 
-Release 0.2.8 uses app/UI 0.2.8 and protocol helper 0.2.4, matching the locally verified runtime bodies. Distribution headers add display and Hub dependency metadata.
+Release 0.2.9 uses app/UI 0.2.9 and protocol helper 0.2.4, matching the locally verified runtime bodies. Distribution headers add display and Hub dependency metadata.
 
 ## Isolated Berry checks
 
@@ -9,6 +9,21 @@ Release 0.2.8 uses app/UI 0.2.8 and protocol helper 0.2.4, matching the locally 
 The 0.2.8 release passed 167 checks on TC002 firmware 1.2.0, including real observed radio metadata formats, missing/technical titles, song updates, state and volume feedback priorities, and stale metadata after room/station changes.
 
 To run it yourself, install the two helpers, install the check script under a separate name, then launch it from the Web UI. Inspect its `shared` result and the rendered check display. Keep it separate from the main app.
+
+## Startup screen — 0.2.9
+
+177 isolated checks passed on official TC002 firmware 1.2.2. The ten additional
+checks cover Menu/Now Playing selection, missing or unknown settings, remembered
+category, current music/radio, paused/stopped playback, unavailable rooms,
+long-press menu access/cancellation and a short click as the only explicit
+resume action. The recorder transport sends no real HTTP or audio commands.
+
+A separate real-device transport allowed only Sonos description, topology,
+status and catalog reads and rejected write actions. Both Menu and Now Playing
+launched successfully, each with eleven read requests, zero write actions and
+no errors. Native framebuffer captures verified the menu and current music
+with artwork. Temporary diagnostics were removed. Existing settings and all
+unrelated scripts, as well as the separate TC001, were compared and preserved.
 
 ## Native pixels
 
